@@ -521,7 +521,7 @@ async fn register_responders(mut s: Established, params: &Params, eff: &Effects<
         );
     }
     if config.observability_enabled && s.version_number >= VersionNumber::V16 {
-        let _ = register_observability_responder(
+        register_observability_responder(
             &s.muxer,
             ObservabilityMessage::stub_cache(0, 0),
             eff,

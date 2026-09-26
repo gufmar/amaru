@@ -30,6 +30,7 @@ use amaru_ouroboros::MempoolMsg;
 use amaru_protocols::{
     manager,
     manager::{Manager, ManagerConfig, ManagerMessage, PeerSelectionNotify},
+    protocol_messages::version_number::VersionNumber,
 };
 use amaru_pure_stage::{Sender, StageGraph, StageRef};
 
@@ -185,14 +186,22 @@ pub fn build_stage_graph(
         .expect("initialization message must be preloaded");
 
     // Manager creation — use main's style with tx_submission_params (now supported in our extended config)
+    let mut manager_config = ManagerConfig::default()
+        .with_tx_submission_params(config.tx_submission_responder_params)
+        .with_blockfetch_pipeline_n(config.blockfetch_pipeline_n);
+    // Experimental observability mini-protocol (draft observability-CIP).
+    // Opt in with: AMARU_OBSERVABILITY=1
+    if std::env::var_os("AMARU_OBSERVABILITY").is_some() {
+        manager_config = manager_config
+            .with_max_n2n_version(VersionNumber::V16)
+            .with_observability_enabled(true);
+    }
     let manager_stage = stage_graph
         .wire_up(
             manager,
             Manager::new(
                 config.network_magic,
-                ManagerConfig::default()
-                    .with_tx_submission_params(config.tx_submission_responder_params)
-                    .with_blockfetch_pipeline_n(config.blockfetch_pipeline_n),
+                manager_config,
                 Arc::new(era_history.clone()),
                 track_peers_input,
                 mempool_stage.clone(),

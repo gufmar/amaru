@@ -41,7 +41,7 @@ pub async fn register_observability_responder<M: amaru_pure_stage::SendData>(
     cached: Message,
     eff: &Effects<M>,
     tombstone: M,
-) -> StageRef<Void> {
+) {
     use crate::protocol::Inputs;
 
     let (state, stage) = ObservabilityResponder::new(muxer.clone(), cached);
@@ -58,7 +58,6 @@ pub async fn register_observability_responder<M: amaru_pure_stage::SendData>(
         },
     )
     .await;
-    obs.contramap(Inputs::<Void>::Network)
 }
 
 #[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
