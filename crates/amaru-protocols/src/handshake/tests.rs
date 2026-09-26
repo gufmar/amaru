@@ -102,7 +102,7 @@ fn test_against_node() {
     match result {
         handshake::HandshakeResult::Accepted(version, data) => {
             assert!(version >= VersionNumber::V14, "{version:?}");
-            assert_eq!(data, VersionData::new(network_magic, true, PeerSharing::Disabled, false));
+            assert_eq!(data, VersionData::new(network_magic, true, PeerSharing::Disabled, false, false));
         }
         handshake::HandshakeResult::Refused(reason) => panic!("{reason:?}"),
         handshake::HandshakeResult::Query(table) => panic!("{table:?}"),
@@ -168,7 +168,7 @@ fn test_against_node_with_tokio() {
     match result {
         handshake::HandshakeResult::Accepted(version, data) => {
             assert!(version >= VersionNumber::V14, "{version:?}");
-            assert_eq!(data, VersionData::new(NetworkMagic::MAINNET, true, PeerSharing::Disabled, false));
+            assert_eq!(data, VersionData::new(NetworkMagic::MAINNET, true, PeerSharing::Disabled, false, false));
         }
         handshake::HandshakeResult::Refused(reason) => panic!("{reason:?}"),
         handshake::HandshakeResult::Query(table) => panic!("{table:?}"),

@@ -42,12 +42,17 @@ impl VersionNumber {
     pub const V14: VersionNumber = VersionNumber::new(14);
     /// CIP-0155 SRV records may appear in peer-sharing on this version.
     pub const V15: VersionNumber = VersionNumber::new(15);
+    /// Experimental N2N version (Peras VersionData field upstream; Amaru observability prototype).
+    pub const V16: VersionNumber = VersionNumber::new(16);
 
     /// Highest node-to-node version offered by default.
+    ///
+    /// Remains V15 so V16 stays opt-in via [`ManagerConfig::max_n2n_version`](crate::manager::ManagerConfig).
     pub const CURRENT: VersionNumber = Self::V15;
 
     /// Versions this node can encode, in ascending order.
-    pub const SUPPORTED: [VersionNumber; 5] = [Self::V11, Self::V12, Self::V13, Self::V14, Self::V15];
+    pub const SUPPORTED: [VersionNumber; 6] =
+        [Self::V11, Self::V12, Self::V13, Self::V14, Self::V15, Self::V16];
 
     pub const fn new(value: u64) -> Self {
         Self(value)
@@ -59,6 +64,11 @@ impl VersionNumber {
 
     pub const fn has_query_and_peer_sharing(self) -> bool {
         self.0 >= 11
+    }
+
+    /// V16+ VersionData includes `perasSupport` (5-tuple).
+    pub const fn has_peras_support_field(self) -> bool {
+        self.0 >= 16
     }
 }
 
@@ -97,6 +107,7 @@ pub(crate) mod tests {
             1 => Just(VersionNumber::V13),
             1 => Just(VersionNumber::V14),
             1 => Just(VersionNumber::V15),
+            1 => Just(VersionNumber::V16),
         ]
     }
 }

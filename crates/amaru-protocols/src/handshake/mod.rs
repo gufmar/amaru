@@ -101,7 +101,7 @@ where
     let accept = || {
         Message::Accept(
             VersionNumber::V14,
-            VersionData::new(NetworkMagic::MAINNET, false, PeerSharing::Disabled, false),
+            VersionData::new(NetworkMagic::MAINNET, false, PeerSharing::Disabled, false, false),
         )
     };
     let refuse = || Message::Refuse(RefuseReason::VersionMismatch(vec![VersionNumber::V14]));
@@ -122,7 +122,7 @@ mod negotiation_tests {
 
     use super::*;
     fn data(magic: NetworkMagic, initiator_only: bool, sharing: bool, query: bool) -> VersionData {
-        VersionData::new(magic, initiator_only, sharing.into(), query)
+        VersionData::new(magic, initiator_only, sharing.into(), query, false)
     }
 
     fn table(entries: &[(u64, VersionData)]) -> VersionTable<VersionData> {

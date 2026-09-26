@@ -185,6 +185,10 @@ pub const PROTO_N2N_BLOCK_FETCH: ProtocolId<Initiator> = ProtocolId::<Initiator>
 pub const PROTO_N2N_TX_SUB: ProtocolId<Initiator> = ProtocolId::<Initiator>(4, PhantomData);
 pub const PROTO_N2N_KEEP_ALIVE: ProtocolId<Initiator> = ProtocolId::<Initiator>(8, PhantomData);
 pub const PROTO_N2N_PEER_SHARE: ProtocolId<Initiator> = ProtocolId::<Initiator>(10, PhantomData);
+/// Experimental observability snapshot mini-protocol (draft observability-CIP).
+///
+/// Provisional mux number for the Amaru prototype; not a permanent Ouroboros allocation.
+pub const PROTO_N2N_OBSERVABILITY: ProtocolId<Initiator> = ProtocolId::<Initiator>(11, PhantomData);
 
 // The below are only for information regarding the allocated numbers, Amaru will not implement N2C protocols.
 

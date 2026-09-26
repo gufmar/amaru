@@ -36,7 +36,7 @@ impl VersionTable<VersionData> {
     }
 
     pub fn query(network_magic: NetworkMagic) -> VersionTable<VersionData> {
-        let data = VersionData::new(network_magic, false, PeerSharing::Disabled, true);
+        let data = VersionData::new(network_magic, false, PeerSharing::Disabled, true, false);
         Self::from_v11_through(VersionNumber::CURRENT, data)
     }
 
@@ -56,7 +56,7 @@ impl VersionTable<VersionData> {
         initiator_only_diffusion_mode: bool,
         advertisable: bool,
     ) -> VersionTable<VersionData> {
-        let data = VersionData::new(network_magic, initiator_only_diffusion_mode, advertisable.into(), false);
+        let data = VersionData::new(network_magic, initiator_only_diffusion_mode, advertisable.into(), false, false);
         Self::from_v11_through(max, data)
     }
 
@@ -145,8 +145,18 @@ pub(crate) mod tests {
     #[test]
     fn v11_and_above_offers_current_version() {
         let table = VersionTable::v11_and_above(NetworkMagic::PREPROD, true, true);
-        assert_eq!(table.values.keys().copied().collect::<Vec<_>>(), VersionNumber::SUPPORTED.to_vec());
+        let expected: Vec<_> =
+            VersionNumber::SUPPORTED.into_iter().filter(|v| *v <= VersionNumber::CURRENT).collect();
+        assert_eq!(table.values.keys().copied().collect::<Vec<_>>(), expected);
         assert_eq!(table.values.keys().next_back().copied(), Some(VersionNumber::CURRENT));
+        assert!(!table.values.contains_key(&VersionNumber::V16));
+    }
+
+    #[test]
+    fn v11_through_v16_includes_experimental_version() {
+        let table = VersionTable::v11_through(VersionNumber::V16, NetworkMagic::PREPROD, false, true);
+        assert!(table.values.contains_key(&VersionNumber::V16));
+        assert_eq!(table.values.keys().next_back().copied(), Some(VersionNumber::V16));
     }
 
     #[test]

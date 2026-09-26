@@ -105,6 +105,8 @@ pub struct VersionData {
     initiator_only_diffusion_mode: bool,
     peer_sharing: PeerSharing,
     query: bool,
+    /// Peras support flag on N2N V16+ (Amaru currently always offers `false`).
+    peras_support: bool,
 }
 
 impl VersionData {
@@ -113,8 +115,15 @@ impl VersionData {
         initiator_only_diffusion_mode: bool,
         peer_sharing: PeerSharing,
         query: bool,
+        peras_support: bool,
     ) -> Self {
-        VersionData { network_magic, initiator_only_diffusion_mode, peer_sharing, query }
+        VersionData {
+            network_magic,
+            initiator_only_diffusion_mode,
+            peer_sharing,
+            query,
+            peras_support,
+        }
     }
 
     pub fn network_magic(&self) -> NetworkMagic {
@@ -133,6 +142,10 @@ impl VersionData {
         self.query
     }
 
+    pub fn peras_support(&self) -> bool {
+        self.peras_support
+    }
+
     /// Returns whether this peer can act as both initiator and responder (full duplex).
     /// See initiator_only_diffusion_mode in the handshake spec.
     pub fn is_full_duplex_capable(&self) -> bool {
@@ -147,7 +160,7 @@ impl VersionData {
     /// Combine two version-data records for the same NTN version.
     ///
     /// `networkMagic` must match. `initiatorOnlyDiffusionMode` and `query` are OR;
-    /// `peerSharing` is enabled only if both offers are enabled.
+    /// `peerSharing` and `perasSupport` are enabled only if both offers are enabled.
     pub(crate) fn combine(&self, other: &Self) -> Result<Self, &'static str> {
         if self.network_magic != other.network_magic {
             return Err("network magic mismatch");
@@ -157,6 +170,7 @@ impl VersionData {
             initiator_only_diffusion_mode: self.initiator_only_diffusion_mode || other.initiator_only_diffusion_mode,
             peer_sharing: self.peer_sharing & other.peer_sharing,
             query: self.query || other.query,
+            peras_support: self.peras_support && other.peras_support,
         })
     }
 }
@@ -165,8 +179,12 @@ impl Display for VersionData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{{ network_magic: {}, initiator_only_diffusion_mode: {}, peer_sharing: {}, query: {} }}",
-            self.network_magic, self.initiator_only_diffusion_mode, self.peer_sharing, self.query
+            "{{ network_magic: {}, initiator_only_diffusion_mode: {}, peer_sharing: {}, query: {}, peras_support: {} }}",
+            self.network_magic,
+            self.initiator_only_diffusion_mode,
+            self.peer_sharing,
+            self.query,
+            self.peras_support
         )
     }
 }
@@ -177,7 +195,14 @@ impl<T: AsRef<VersionNumber>> cbor::Encode<T> for VersionData {
         e: &mut cbor::Encoder<W>,
         ctx: &mut T,
     ) -> Result<(), cbor::encode::Error<W::Error>> {
-        if ctx.as_ref().has_query_and_peer_sharing() {
+        if ctx.as_ref().has_peras_support_field() {
+            e.array(5)?
+                .encode(self.network_magic)?
+                .bool(self.initiator_only_diffusion_mode)?
+                .encode(self.peer_sharing)?
+                .bool(self.query)?
+                .bool(self.peras_support)?;
+        } else if ctx.as_ref().has_query_and_peer_sharing() {
             e.array(4)?
                 .encode(self.network_magic)?
                 .bool(self.initiator_only_diffusion_mode)?
@@ -192,20 +217,41 @@ impl<T: AsRef<VersionNumber>> cbor::Encode<T> for VersionData {
 
 impl<'b, T: AsRef<VersionNumber>> cbor::Decode<'b, T> for VersionData {
     fn decode(d: &mut cbor::Decoder<'b>, ctx: &mut T) -> Result<Self, cbor::decode::Error> {
-        if ctx.as_ref().has_query_and_peer_sharing() {
+        if ctx.as_ref().has_peras_support_field() {
+            let len = d.array()?;
+            cbor::check_tagged_array_length(0, len, 5)?;
+            let network_magic = d.decode()?;
+            let initiator_only_diffusion_mode = d.bool()?;
+            let peer_sharing = d.decode()?;
+            let query = d.bool()?;
+            let peras_support = d.bool()?;
+            Ok(Self { network_magic, initiator_only_diffusion_mode, peer_sharing, query, peras_support })
+        } else if ctx.as_ref().has_query_and_peer_sharing() {
             let len = d.array()?;
             cbor::check_tagged_array_length(0, len, 4)?;
             let network_magic = d.decode()?;
             let initiator_only_diffusion_mode = d.bool()?;
             let peer_sharing = d.decode()?;
             let query = d.bool()?;
-            Ok(Self { network_magic, initiator_only_diffusion_mode, peer_sharing, query })
+            Ok(Self {
+                network_magic,
+                initiator_only_diffusion_mode,
+                peer_sharing,
+                query,
+                peras_support: false,
+            })
         } else {
             let len = d.array()?;
             cbor::check_tagged_array_length(0, len, 2)?;
             let network_magic = d.decode()?;
             let initiator_only_diffusion_mode = d.bool()?;
-            Ok(Self { network_magic, initiator_only_diffusion_mode, peer_sharing: PeerSharing::Disabled, query: false })
+            Ok(Self {
+                network_magic,
+                initiator_only_diffusion_mode,
+                peer_sharing: PeerSharing::Disabled,
+                query: false,
+                peras_support: false,
+            })
         }
     }
 }
@@ -221,8 +267,9 @@ pub(crate) mod tests {
         pub fn any_version_data()(network_magic in any_network_magic(),
             initiator_only_diffusion_mode in any::<bool>(),
             peer_sharing in any::<bool>().prop_map(PeerSharing::from),
-            query in any::<bool>()) -> VersionData {
-            VersionData::new(network_magic, initiator_only_diffusion_mode, peer_sharing, query)
+            query in any::<bool>(),
+            peras_support in any::<bool>()) -> VersionData {
+            VersionData::new(network_magic, initiator_only_diffusion_mode, peer_sharing, query, peras_support)
         }
     }
 

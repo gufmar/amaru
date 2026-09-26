@@ -279,7 +279,13 @@ pub struct ManagerConfig {
     /// Highest node-to-node protocol version offered in handshake.
     ///
     /// Defaults to [`VersionNumber::CURRENT`] (V15). Tests pin V14 to check fallback.
+    /// Set to [`VersionNumber::V16`] to offer the experimental N2N version.
     pub max_n2n_version: VersionNumber,
+    /// When true and negotiated version is ≥ V16, register the experimental observability responder.
+    ///
+    /// Prototype only: does not advertise capability in VersionData. Do not treat V16 alone as
+    /// proof that a remote peer speaks mux protocol 11.
+    pub observability_enabled: bool,
 }
 
 impl ManagerConfig {
@@ -317,6 +323,11 @@ impl ManagerConfig {
         self.max_n2n_version = version;
         self
     }
+
+    pub fn with_observability_enabled(mut self, enabled: bool) -> Self {
+        self.observability_enabled = enabled;
+        self
+    }
 }
 
 impl Default for ManagerConfig {
@@ -331,6 +342,7 @@ impl Default for ManagerConfig {
             diffusion_stop_timeout: Duration::from_secs(300),
             maintenance_stop_timeout: Duration::from_secs(120),
             max_n2n_version: VersionNumber::CURRENT,
+            observability_enabled: false,
         }
     }
 }

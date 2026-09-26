@@ -30,6 +30,7 @@ pub mod mempool_effects;
 pub mod metrics_effects;
 pub mod mux;
 pub mod network_effects;
+pub mod observability;
 pub mod peer_sharing;
 pub mod protocol;
 pub mod protocol_messages;
