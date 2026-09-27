@@ -151,7 +151,7 @@ pub async fn run_session(req: SessionRequest) -> anyhow::Result<SessionPartial> 
         Ok(Some(report)) => report,
         Ok(None) => {
             running.abort();
-            bail!("probe session ended without a report")
+            bail!("probe session ended without a report (graph shut down before result delivery)")
         }
         Err(_) => {
             running.abort();
@@ -199,23 +199,33 @@ enum DriverMsg {
     Tip(ChainSyncInitiatorMsg),
     Share(ShareResult),
     Observe(ObsResult),
-    /// Supervised mini-protocol or mux child exited (expected after Done / session end).
+    /// Mini-protocol child exited (often expected after Done).
     ChildDied,
+    /// Mux exited: connection closed, decode failure, or unknown protocol.
+    MuxDied,
     StepTimeout,
 }
 
 async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>) -> Driver {
+    // After the report is sent, ignore further mailbox traffic until the outer session aborts.
+    if state.phase == Phase::Done {
+        return state;
+    }
+
     match msg {
         DriverMsg::Start => {
             let muxer = eff.stage("mux", mux::stage).await;
-            let muxer = eff.wire_up(
-                muxer,
-                mux::State::new(state.conn_id, &[(PROTO_HANDSHAKE.erase(), 5760)], Role::Initiator, state.peer),
-            )
-            .await;
+            let muxer = eff.supervise(muxer, DriverMsg::MuxDied);
+            let muxer = eff
+                .wire_up(
+                    muxer,
+                    mux::State::new(state.conn_id, &[(PROTO_HANDSHAKE.erase(), 5760)], Role::Initiator, state.peer),
+                )
+                .await;
 
             let hs_reply = eff.me_ref().contramap(DriverMsg::Handshake);
             let hs = eff.stage("handshake", handshake::initiator()).await;
+            let hs = eff.supervise(hs, DriverMsg::ChildDied);
             let hs = eff
                 .wire_up(
                     hs,
@@ -244,6 +254,7 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
             state
         }
         DriverMsg::Handshake(result) => {
+            eff.clear_timeout_at(1).await;
             match result {
                 HandshakeResult::Accepted(version, data) => {
                     state.partial.handshake = Some(HandshakeInfo {
@@ -271,6 +282,7 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
                 CsResult::Initialize => state,
                 CsResult::IntersectFound(_, tip) | CsResult::IntersectNotFound(tip) => {
                     state.partial.tip = Some(format_point(tip));
+                    eff.clear_timeout_at(2).await;
                     eff.send(&msg.handler, CsLocal::Done).await;
                     advance_after_tip(state, &eff).await
                 }
@@ -285,26 +297,44 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
                     if state.partial.tip.is_none() {
                         state.partial.errors.push("chainsync terminated before tip".to_string());
                     }
+                    eff.clear_timeout_at(2).await;
                     advance_after_tip(state, &eff).await
                 }
             }
         }
         DriverMsg::Share(share) => {
+            eff.clear_timeout_at(3).await;
             state.partial.peers = Some(share.peers.iter().map(|a| a.to_string()).collect());
             advance_after_peershare(state, &eff).await
         }
         DriverMsg::Observe(ObsResult::Publications(message)) => {
+            eff.clear_timeout_at(4).await;
             state.partial.publications = Some(publications_json(&message));
             finish(state, &eff).await
         }
         DriverMsg::ChildDied => state,
+        DriverMsg::MuxDied => {
+            let hint = match state.phase {
+                Phase::Observe => {
+                    "mux exited during observe (connection closed, or peer has no observability on mux 11; set AMARU_OBSERVABILITY=1 on Amaru)"
+                }
+                Phase::Handshaking => "mux exited during handshake",
+                Phase::Tip => "mux exited during tip",
+                Phase::PeerShare => "mux exited during peershare",
+                Phase::Start | Phase::Done => "mux exited",
+            };
+            state.partial.errors.push(hint.to_string());
+            finish(state, &eff).await
+        }
         DriverMsg::StepTimeout => {
             let label = match state.phase {
                 Phase::Start => "start",
                 Phase::Handshaking => "handshake",
                 Phase::Tip => "tip",
                 Phase::PeerShare => "peershare",
-                Phase::Observe => "observe",
+                Phase::Observe => {
+                    "observe (no MsgPublications; peer may lack AMARU_OBSERVABILITY / mux 11)"
+                }
                 Phase::Done => "done",
             };
             state.partial.errors.push(format!("{label} timed out"));
@@ -461,9 +491,14 @@ async fn start_observe(
 }
 
 async fn finish(mut state: Driver, eff: &Effects<DriverMsg>) -> Driver {
+    if state.phase == Phase::Done {
+        return state;
+    }
     state.phase = Phase::Done;
+    // Deliver the report, then stay alive. Terminating the root stage signals graph-wide
+    // abort and can kill the output stage before it forwards the report to the CLI.
     eff.send(&state.report_to, state.partial.clone()).await;
-    eff.terminate().await
+    state
 }
 
 fn format_refuse(reason: &RefuseReason) -> String {
