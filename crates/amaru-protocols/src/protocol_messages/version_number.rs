@@ -70,6 +70,13 @@ impl VersionNumber {
     pub const fn has_peras_support_field(self) -> bool {
         self.0 >= 16
     }
+
+    /// Whether this node decodes version data for the version.
+    ///
+    /// Any other version number stays in the handshake version table as the original CBOR item.
+    pub fn is_supported(self) -> bool {
+        Self::SUPPORTED.contains(&self)
+    }
 }
 
 impl<C> cbor::Encode<C> for VersionNumber {

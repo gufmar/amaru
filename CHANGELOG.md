@@ -39,6 +39,10 @@ Other guiding principles:
 
 - **amaru**: add `amaru peer probe` to check TCP RTT, N2N handshake, tip, peer-share, and experimental observability against `IP:PORT`
 
+### Fixed
+
+- **amaru**: `cardano-cli ping` from cardano-cli 11.2 onwards completes the handshake again. That client offers node-to-node version 16 alongside versions 14 and 15; version 16 is kept as raw CBOR and the node still agrees version 15. ([#1425](https://github.com/pragma-org/amaru/issues/1425))
+
 ## [v10.11.20260925](https://github.com/pragma-org/amaru/releases/tag/v10.11.20260925)
 
 ### Added
