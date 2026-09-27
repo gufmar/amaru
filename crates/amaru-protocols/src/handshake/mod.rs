@@ -24,12 +24,13 @@ pub use messages::Message;
 use crate::{
     protocol::{ProtoSpec, ProtocolState, RoleT},
     protocol_messages::{
-        handshake::{HandshakeResult, RefuseReason},
         version_data::{PeerSharing, VersionData},
         version_number::VersionNumber,
         version_table::VersionTable,
     },
 };
+
+pub use crate::protocol_messages::handshake::{HandshakeResult, RefuseReason};
 
 pub fn register_deserializers() -> amaru_pure_stage::DeserializerGuards {
     vec![initiator::register_deserializers(), responder::register_deserializers()].into_iter().flatten().collect()
@@ -123,7 +124,7 @@ mod negotiation_tests {
     use amaru_kernel::{NetworkMagic, cbor};
 
     use super::*;
-    use crate::protocol_messages::version_table::tests::{haskell_ping_propose, n2n_version_data_cbor};
+    use crate::protocol_messages::version_table::tests::haskell_ping_propose;
     fn data(magic: NetworkMagic, initiator_only: bool, sharing: bool, query: bool) -> VersionData {
         VersionData::new(magic, initiator_only, sharing.into(), query, false)
     }
@@ -261,20 +262,27 @@ mod negotiation_tests {
     }
 
     #[test]
-    fn haskell_ping_offer_keeps_v16_bytes_and_agrees_on_v15() {
-        // test to be removed once we implement v16
+    fn haskell_ping_offer_decodes_v16_and_agrees_on_v15_when_we_offer_current() {
+        // cardano-cli ping proposes 14/15/16; with V16 in SUPPORTED we decode its 5-tuple.
+        // Default offers still stop at CURRENT (V15), so negotiation agrees on V15.
         let magic = NetworkMagic::MAINNET;
         let bytes = haskell_ping_propose(magic.as_u64());
         let decoded: Message<VersionData> = cbor::decode(&bytes).unwrap_or_else(|error| panic!("{error}"));
         let Message::Propose(theirs) = decoded else { panic!("expected propose") };
         let v16 = VersionNumber::new(16);
-        assert_eq!(theirs.unknown.get(&v16), Some(&n2n_version_data_cbor(16, magic.as_u64())));
-        assert!(!theirs.values.contains_key(&v16));
+        assert!(theirs.unknown.get(&v16).is_none());
+        assert!(theirs.values.contains_key(&v16));
+        let v16_data = &theirs.values[&v16];
+        assert_eq!(v16_data.network_magic(), magic);
+        assert!(v16_data.initiator_only_diffusion_mode());
+        assert!(!v16_data.is_advertisable());
+        assert!(!v16_data.query());
+        assert!(v16_data.peras_support());
         assert_eq!(
             theirs.to_string(),
-            "14: { network_magic: mainnet, initiator_only_diffusion_mode: true, peer_sharing: Disabled, query: false }, \
-            15: { network_magic: mainnet, initiator_only_diffusion_mode: true, peer_sharing: Disabled, query: false }, \
-            16: [764824073, true, 0, false, true]"
+            "14: { network_magic: mainnet, initiator_only_diffusion_mode: true, peer_sharing: Disabled, query: false, peras_support: false }, \
+            15: { network_magic: mainnet, initiator_only_diffusion_mode: true, peer_sharing: Disabled, query: false, peras_support: false }, \
+            16: { network_magic: mainnet, initiator_only_diffusion_mode: true, peer_sharing: Disabled, query: false, peras_support: true }"
         );
 
         let v15 = &theirs.values[&VersionNumber::V15];
@@ -287,7 +295,7 @@ mod negotiation_tests {
         let encoded = cbor::to_cbor(&Message::Propose(theirs.clone()));
         let decoded: Message<VersionData> = cbor::decode(&encoded).unwrap_or_else(|error| panic!("{error}"));
         let Message::Propose(again) = decoded else { panic!("expected propose") };
-        assert_eq!(again.unknown.get(&v16), theirs.unknown.get(&v16));
+        assert_eq!(again.values.get(&v16), theirs.values.get(&v16));
 
         let ours = VersionTable::v11_and_above(magic, false, true);
         assert_eq!(

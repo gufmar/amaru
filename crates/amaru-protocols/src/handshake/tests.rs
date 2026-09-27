@@ -260,7 +260,7 @@ async fn haskell_ping_handshake_negotiates_over_tcp() {
     running.abort();
     trace_guard.defuse();
 
-    let agreed = VersionData::new(magic, true, PeerSharing::Disabled, false);
+    let agreed = VersionData::new(magic, true, PeerSharing::Disabled, false, false);
     assert_eq!(stage_result, Some(handshake::HandshakeResult::Accepted(VersionNumber::V15, agreed.clone())));
 
     let message: Message<VersionData> = cbor::from_cbor_no_leftovers(&payload).expect("accept message");

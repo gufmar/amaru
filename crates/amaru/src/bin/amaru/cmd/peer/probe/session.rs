@@ -19,20 +19,18 @@ use std::{
 
 use amaru_kernel::{NetworkName, Peer, Point};
 use amaru_network::connection::TokioConnections;
-use amaru_ouroboros::{ConnectionsResource, in_memory_chain_store::InMemoryChainStore};
+use amaru_ouroboros::{ConnectionProvider, ConnectionsResource, in_memory_chain_store::InMemoryChainStore};
 use amaru_protocols::{
     chainsync::{self, ChainSyncInitiatorMsg, InitiatorMessage as CsLocal, InitiatorResult as CsResult},
     deserializers,
-    handshake::{self, HandshakeResult},
+    handshake::{HandshakeResult, RefuseReason},
     mux::{self, MuxMessage},
     observability::{
         self, InitiatorMessage as ObsLocal, InitiatorResult as ObsResult, Publication, register_observability_initiator,
     },
     peer_sharing::{PeerSharingMessage, ShareResult, register_peer_sharing_initiator},
     protocol::{Inputs, PROTO_HANDSHAKE, Role},
-    protocol_messages::{
-        handshake::RefuseReason, version_data::PeerSharing, version_number::VersionNumber, version_table::VersionTable,
-    },
+    protocol_messages::{version_data::PeerSharing, version_number::VersionNumber, version_table::VersionTable},
     store_effects::ResourceHeaderStore,
 };
 use amaru_pure_stage::{Effects, StageGraph, StageRef, Void, tokio::TokioBuilder};
@@ -139,7 +137,9 @@ pub async fn run_session(req: SessionRequest) -> anyhow::Result<SessionPartial> 
         },
     );
 
-    network.preload(&driver, [DriverMsg::Start]).context("preload Start")?;
+    if network.preload(&driver, [DriverMsg::Start]).is_err() {
+        bail!("preload Start failed");
+    }
 
     let handle = Handle::current();
     let running = network.run(handle);
@@ -351,7 +351,7 @@ async fn advance_after_handshake(
     finish(state, eff).await
 }
 
-async fn advance_after_tip(mut state: Driver, eff: &Effects<DriverMsg>) -> Driver {
+async fn advance_after_tip(state: Driver, eff: &Effects<DriverMsg>) -> Driver {
     let Some(muxer) = state.muxer.clone() else {
         return finish(state, eff).await;
     };
@@ -377,7 +377,7 @@ async fn advance_after_tip(mut state: Driver, eff: &Effects<DriverMsg>) -> Drive
     finish(state, eff).await
 }
 
-async fn advance_after_peershare(mut state: Driver, eff: &Effects<DriverMsg>) -> Driver {
+async fn advance_after_peershare(state: Driver, eff: &Effects<DriverMsg>) -> Driver {
     let Some(muxer) = state.muxer.clone() else {
         return finish(state, eff).await;
     };
