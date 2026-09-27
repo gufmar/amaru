@@ -23,7 +23,7 @@ use amaru_ouroboros::{ConnectionProvider, ConnectionsResource, in_memory_chain_s
 use amaru_protocols::{
     chainsync::{self, ChainSyncInitiatorMsg, InitiatorMessage as CsLocal, InitiatorResult as CsResult},
     deserializers,
-    handshake::{HandshakeResult, RefuseReason},
+    handshake::{self, HandshakeResult, RefuseReason},
     mux::{self, MuxMessage},
     observability::{
         self, InitiatorMessage as ObsLocal, InitiatorResult as ObsResult, Publication, register_observability_initiator,
