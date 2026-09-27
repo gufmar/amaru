@@ -49,18 +49,25 @@ pub enum InitiatorResult {
     Publications(Message),
 }
 
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ObservabilityInitiator {
     muxer: StageRef<MuxMessage>,
     #[allow(dead_code)]
     peer: Peer,
     #[allow(dead_code)]
     conn_id: ConnectionId,
+    /// Optional destination for [`InitiatorResult`] (e.g. CLI probe output).
+    reply_to: Option<StageRef<InitiatorResult>>,
 }
 
 impl ObservabilityInitiator {
-    pub fn new(muxer: StageRef<MuxMessage>, peer: Peer, conn_id: ConnectionId) -> (State, Self) {
-        (State::Idle, Self { muxer, peer, conn_id })
+    pub fn new(
+        muxer: StageRef<MuxMessage>,
+        peer: Peer,
+        conn_id: ConnectionId,
+        reply_to: Option<StageRef<InitiatorResult>>,
+    ) -> (State, Self) {
+        (State::Idle, Self { muxer, peer, conn_id, reply_to })
     }
 }
 
@@ -85,10 +92,11 @@ impl StageState<State, Initiator> for ObservabilityInitiator {
         self,
         _proto: &State,
         input: InitiatorResult,
-        _eff: &Effects<Inputs<Self::LocalIn>>,
+        eff: &Effects<Inputs<Self::LocalIn>>,
     ) -> anyhow::Result<(Option<InitiatorAction>, Self)> {
-        // Result delivered to caller via ProtocolState; no further local action.
-        let _ = input;
+        if let Some(reply_to) = &self.reply_to {
+            eff.send(reply_to, input).await;
+        }
         Ok((None, self))
     }
 

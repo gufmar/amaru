@@ -37,6 +37,8 @@ Other guiding principles:
 
 ## v10.11.20261001 _[unreleased; planned for 2026-10-01]_
 
+- **amaru**: add `amaru peer probe` to check TCP RTT, N2N handshake, tip, peer-share, and experimental observability against `IP:PORT`
+
 ## [v10.11.20260925](https://github.com/pragma-org/amaru/releases/tag/v10.11.20260925)
 
 ### Added

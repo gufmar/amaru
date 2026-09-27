@@ -126,20 +126,29 @@ where
 #[cfg(test)]
 pub(crate) mod tests {
     use amaru_kernel::prop_cbor_roundtrip;
-    use proptest::prop_compose;
+    use proptest::prelude::Strategy;
 
     use super::*;
     use crate::protocol_messages::{
-        version_data::{VersionData, tests::any_version_data},
+        version_data::{
+            VersionData,
+            tests::{any_version_data, normalize_version_data},
+        },
         version_number::tests::any_version_number,
     };
 
     prop_cbor_roundtrip!(VersionTable<VersionData>, any_version_table());
 
-    prop_compose! {
-        pub fn any_version_table()(values in proptest::collection::btree_map(any_version_number(), any_version_data(), 0..3)) -> VersionTable<VersionData> {
-            VersionTable { values }
-        }
+    /// Tables whose VersionData matches each key's CBOR shape (V16+ may carry `peras_support`).
+    pub fn any_version_table() -> impl Strategy<Value = VersionTable<VersionData>> {
+        proptest::collection::btree_map(any_version_number(), any_version_data(), 0..3).prop_map(|values| {
+            VersionTable {
+                values: values
+                    .into_iter()
+                    .map(|(version, data)| (version, normalize_version_data(version, data)))
+                    .collect(),
+            }
+        })
     }
 
     #[test]

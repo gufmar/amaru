@@ -65,12 +65,13 @@ pub async fn register_observability_initiator<M: amaru_pure_stage::SendData>(
     muxer: &StageRef<MuxMessage>,
     peer: Peer,
     conn_id: ConnectionId,
+    reply_to: Option<StageRef<InitiatorResult>>,
     eff: &Effects<M>,
     tombstone: M,
 ) -> StageRef<InitiatorMessage> {
     use crate::protocol::Inputs;
 
-    let (state, stage) = ObservabilityInitiator::new(muxer.clone(), peer, conn_id);
+    let (state, stage) = ObservabilityInitiator::new(muxer.clone(), peer, conn_id, reply_to);
     let obs = eff.stage("observability", initiator()).await;
     let obs = eff.supervise(obs, tombstone);
     let obs = eff.wire_up(obs, (state, stage)).await;

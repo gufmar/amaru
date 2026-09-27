@@ -125,7 +125,10 @@ pub(crate) mod tests {
         handshake::messages::Message::*,
         protocol_messages::{
             handshake::tests::any_refuse_reason,
-            version_data::{VersionData, tests::any_version_data},
+            version_data::{
+                VersionData,
+                tests::any_version_data_for,
+            },
             version_number::tests::any_version_number,
             version_table::tests::any_version_table,
         },
@@ -146,10 +149,10 @@ pub(crate) mod tests {
         }
     }
 
-    prop_compose! {
-        fn any_accept_message()(version_number in any_version_number(), version_data in any_version_data()) -> Message<VersionData> {
-            Accept(version_number, version_data)
-        }
+    fn any_accept_message() -> impl Strategy<Value = Message<VersionData>> {
+        any_version_number().prop_flat_map(|version_number| {
+            any_version_data_for(version_number).prop_map(move |version_data| Accept(version_number, version_data))
+        })
     }
 
     prop_compose! {

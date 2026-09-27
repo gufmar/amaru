@@ -262,6 +262,7 @@ pub(crate) mod tests {
     use proptest::{prelude::any, prop_compose, strategy::Strategy};
 
     use super::*;
+    use crate::protocol_messages::version_number::VersionNumber;
 
     prop_compose! {
         pub fn any_version_data()(network_magic in any_network_magic(),
@@ -270,6 +271,38 @@ pub(crate) mod tests {
             query in any::<bool>(),
             peras_support in any::<bool>()) -> VersionData {
             VersionData::new(network_magic, initiator_only_diffusion_mode, peer_sharing, query, peras_support)
+        }
+    }
+
+    /// VersionData whose wire shape matches `version` (no `peras_support` below V16).
+    pub fn any_version_data_for(version: VersionNumber) -> impl Strategy<Value = VersionData> {
+        any_version_data().prop_map(move |data| {
+            if version.has_peras_support_field() {
+                data
+            } else {
+                VersionData::new(
+                    data.network_magic(),
+                    data.initiator_only_diffusion_mode(),
+                    data.peer_sharing(),
+                    data.query(),
+                    false,
+                )
+            }
+        })
+    }
+
+    /// Drop in-memory `peras_support` when the version cannot encode it.
+    pub fn normalize_version_data(version: VersionNumber, data: VersionData) -> VersionData {
+        if version.has_peras_support_field() {
+            data
+        } else {
+            VersionData::new(
+                data.network_magic(),
+                data.initiator_only_diffusion_mode(),
+                data.peer_sharing(),
+                data.query(),
+                false,
+            )
         }
     }
 

@@ -44,18 +44,17 @@ mod register {
 
     use super::*;
     use crate::{
-        connection::ConnectionMessage,
         mux::{Frame, MuxMessage},
         protocol::{Inputs, PROTO_N2N_CHAIN_SYNC},
     };
 
-    pub async fn register_chainsync_initiator(
+    pub async fn register_chainsync_initiator<M: amaru_pure_stage::SendData>(
         muxer: &StageRef<MuxMessage>,
         peer: Peer,
         conn_id: ConnectionId,
         pipeline: StageRef<ChainSyncInitiatorMsg>,
-        eff: &Effects<ConnectionMessage>,
-        tombstone: ConnectionMessage,
+        eff: &Effects<M>,
+        tombstone: M,
     ) -> StageRef<InitiatorMessage> {
         let chainsync = eff.stage("chainsync", initiator()).await;
         let chainsync = eff.supervise(chainsync, tombstone);
@@ -73,13 +72,13 @@ mod register {
         chainsync.contramap(Inputs::Local)
     }
 
-    pub async fn register_chainsync_responder(
+    pub async fn register_chainsync_responder<M: amaru_pure_stage::SendData>(
         muxer: &StageRef<MuxMessage>,
         upstream: Point,
         peer: Peer,
         conn_id: ConnectionId,
-        eff: &Effects<ConnectionMessage>,
-        tombstone: ConnectionMessage,
+        eff: &Effects<M>,
+        tombstone: M,
     ) -> StageRef<ResponderMessage> {
         let chainsync = eff.stage("chainsync-responder", responder()).await;
         let chainsync = eff.supervise(chainsync, tombstone);
