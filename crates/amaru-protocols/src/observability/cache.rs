@@ -14,10 +14,11 @@
 
 //! Process-wide publications cache for the observability responder.
 //!
-//! `ManagerConfig` stays `Copy` / serde-friendly; the node installs a provider at
-//! startup. Each inbound registration snapshots via [`publications_cache`].
+//! The node installs a provider that reads a shared, **pre-encoded** [`Message::CachedPublications`]
+//! bag. A background refresher rebuilds and CBOR-encodes that bag on each 600-slot window.
+//! Observe replies clone those bytes; mux Encode writes them verbatim (no per-request encode).
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use super::messages::Message;
 
@@ -41,28 +42,51 @@ pub fn publications_cache() -> Message {
     }
 }
 
+/// Shared handle for a pre-built publications bag that can be swapped in place.
+#[derive(Clone)]
+pub struct PublicationsCache {
+    inner: Arc<RwLock<Message>>,
+}
+
+impl PublicationsCache {
+    pub fn new(initial: Message) -> Self {
+        Self { inner: Arc::new(RwLock::new(initial)) }
+    }
+
+    pub fn get(&self) -> Message {
+        self.inner.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub fn replace(&self, message: Message) {
+        *self.inner.write().unwrap_or_else(|e| e.into_inner()) = message;
+    }
+
+    /// Install this cache as the process-wide publications provider (first call wins).
+    pub fn install_as_provider(&self) {
+        let cache = self.clone();
+        set_publications_provider(Arc::new(move || cache.get()));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::observability::{OpenPayload, PUBLICATION_VERSION, Publication};
 
     #[test]
-    fn default_cache_is_stub_when_unset() {
-        // Provider may already be set in other tests in the same process; only assert shape.
-        let msg = match PROVIDER.get() {
-            None => Message::stub_cache(0, 0),
-            Some(f) => f(),
-        };
-        assert!(matches!(msg, Message::Publications(_)));
-    }
-
-    #[test]
-    fn message_publications_round_trips_open_payload() {
-        let msg = Message::Publications(vec![Publication::Open {
+    fn cache_replace_is_visible_to_get() {
+        let cache = PublicationsCache::new(Message::stub_cache(0, 1));
+        cache.replace(Message::Publications(vec![Publication::Open {
             version: PUBLICATION_VERSION,
-            snapshot_slot: 7,
+            snapshot_slot: 600,
             payload: OpenPayload::stub_amaru(10),
-        }]);
-        assert_eq!(msg.message_type(), "Publications");
+        }]));
+        match cache.get() {
+            Message::Publications(pubs) => match &pubs[0] {
+                Publication::Open { snapshot_slot, .. } => assert_eq!(*snapshot_slot, 600),
+                other => panic!("unexpected {other:?}"),
+            },
+            other => panic!("unexpected {other:?}"),
+        }
     }
 }

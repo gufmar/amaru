@@ -19,7 +19,7 @@ use amaru_consensus::stages::{
     block_source::{self, BlockSource},
     fetch_blocks::{self, DownloadedBlock, FetchBlocks, FetchBlocksMsg},
     mempool::{self, MempoolStageState},
-    peer_selection::{self, PeerSelection, PeerSelectionMsg},
+    peer_selection::{self, PeerConnectionStats, PeerSelection, PeerSelectionMsg},
     select_chain::{self, SelectChain, SelectChainMsg},
     track_peers::{self, TrackPeers, TrackPeersMsg},
     validate_block::{self, ValidateBlock, ValidateBlockMsg},
@@ -54,6 +54,7 @@ pub fn build_stage_graph(
     ledger_tip: Point,
     recovery_best_hash: HeaderHash,
     max_epoch: Epoch,
+    peer_stats: Arc<PeerConnectionStats>,
     stage_graph: &mut impl StageGraph,
 ) -> NodeStages {
     let span = debug_span!(consensus::node::INITIALIZE);
@@ -72,7 +73,8 @@ pub fn build_stage_graph(
             config.target_downstream_peers,
             config.peer_removal_cooldown_secs,
         )
-        .with_share_request_delays(config.share_request_initial_delay, config.share_request_interval),
+        .with_share_request_delays(config.share_request_initial_delay, config.share_request_interval)
+        .with_peer_stats(peer_stats),
     );
 
     let peer_selection_notify = peer_selection_ref.contramap(|n: PeerSelectionNotify| match n {

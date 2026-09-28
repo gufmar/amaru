@@ -21,7 +21,7 @@ use amaru_consensus::{
         ResourcePoolSummaries, ResourceTxValidation, find_best_candidate,
     },
     performance::{Performance, ResourcePerformance},
-    stages::track_peers::TrackPeersMsg,
+    stages::{peer_selection::PeerConnectionStats, track_peers::TrackPeersMsg},
 };
 use amaru_kernel::{ConsensusParameters, EraHistory, GlobalParameters, HeaderHash, PeerCandidate, Point, Transaction};
 use amaru_ledger::{
@@ -109,6 +109,10 @@ struct NodeLifecycle {
     ledger_thread: LedgerThreadStop,
     connections: Arc<TokioConnections>,
     performance: Box<dyn FnOnce() -> std::thread::Result<()> + Send + Sync>,
+    /// Best-chain tip slot reader (observability publications cache / other embedders).
+    tip_slot: Arc<dyn Fn() -> u64 + Send + Sync>,
+    /// Live peer-connection counters from peer_selection (observability publications).
+    peer_stats: Arc<amaru_consensus::stages::peer_selection::PeerConnectionStats>,
 }
 
 /// Outcome of a shutdown that released every owned resource.
@@ -186,6 +190,21 @@ impl NodeRunning {
         self.mempool_sender.clone()
     }
 
+    /// Current best-chain tip slot (0 at origin).
+    pub fn tip_slot(&self) -> u64 {
+        (self.lifecycle.tip_slot)()
+    }
+
+    /// Clone of the tip-slot reader for background tasks (e.g. observability cache).
+    pub fn tip_slot_source(&self) -> Arc<dyn Fn() -> u64 + Send + Sync> {
+        Arc::clone(&self.lifecycle.tip_slot)
+    }
+
+    /// Live peer-connection counters maintained by peer_selection.
+    pub fn peer_connection_stats(&self) -> Arc<amaru_consensus::stages::peer_selection::PeerConnectionStats> {
+        Arc::clone(&self.lifecycle.peer_stats)
+    }
+
     pub fn trace_buffer(&self) -> &Arc<Mutex<TraceBuffer>> {
         self.tokio_running.trace_buffer()
     }
@@ -212,7 +231,7 @@ impl NodeRunning {
     /// and does not establish that cleanup completed.
     pub async fn shutdown(self) -> Result<ShutdownReport, ShutdownError> {
         let Self { tokio_running, mempool_sender, lifecycle } = self;
-        let NodeLifecycle { ledger_thread, connections, performance } = lifecycle;
+        let NodeLifecycle { ledger_thread, connections, performance, tip_slot: _, peer_stats: _ } = lifecycle;
 
         tokio_running.request_abort();
         drop(mempool_sender);
@@ -270,6 +289,11 @@ pub fn build_node(
         .map_err(|error| NodeStartError::InvalidConfiguration { reason: format!("{error:#}") })?;
     // NOTE: Open the chain store first so incompatible DB versions fail before the slower ledger open.
     let chain_store = make_chain_store(config)?;
+    let tip_slot: Arc<dyn Fn() -> u64 + Send + Sync> = {
+        let chain_store = chain_store.clone();
+        Arc::new(move || chain_store.get_best_chain_tip().slot().as_u64())
+    };
+    let peer_stats = PeerConnectionStats::new();
 
     // Make the ledger state and get its tip
     let mut state = make_state(&config.ledger_config, Some(with_startup_hook::<RocksDB>), chain_store.clone())?;
@@ -301,6 +325,8 @@ pub fn build_node(
     register_resources(
         stage_builder,
         chain_store,
+        tip_slot,
+        Arc::clone(&peer_stats),
         global_parameters,
         pool_summaries,
         block_validator.clone(),
@@ -319,6 +345,7 @@ pub fn build_node(
         ledger_tip,
         recovery_best_hash,
         max_epoch,
+        peer_stats,
         stage_builder,
     );
 
@@ -354,6 +381,8 @@ pub fn build_node(
 fn register_resources(
     stage_graph: &mut impl StageGraph,
     chain_store: Arc<dyn ChainStore>,
+    tip_slot: Arc<dyn Fn() -> u64 + Send + Sync>,
+    peer_stats: Arc<PeerConnectionStats>,
     global_parameters: &GlobalParameters,
     pool_summaries: PoolSummaries,
     block_validator: Arc<BlockValidator>,
@@ -405,7 +434,13 @@ fn register_resources(
     let join_performance = Box::new(performance.shutdown_callback());
     stage_graph.resources().put::<ResourcePerformance>(Arc::new(performance));
 
-    stage_graph.resources().put(NodeLifecycle { ledger_thread, connections, performance: join_performance });
+    stage_graph.resources().put(NodeLifecycle {
+        ledger_thread,
+        connections,
+        performance: join_performance,
+        tip_slot,
+        peer_stats,
+    });
 }
 
 /// This function migrates the database if necessary

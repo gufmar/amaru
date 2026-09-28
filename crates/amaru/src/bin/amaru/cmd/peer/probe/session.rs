@@ -59,6 +59,8 @@ pub struct HandshakeInfo {
     pub network_magic: u64,
     pub initiator_only: bool,
     pub peer_sharing: bool,
+    /// Negotiated VersionData `query` flag. When true, handshake is a capability probe
+    /// (`MsgQueryReply`) and does not keep a session — Amaru probe always offers `false`.
     pub query: bool,
     pub peras_support: bool,
 }
@@ -87,14 +89,26 @@ impl TipInfo {
 pub struct ProbeReport {
     pub address: String,
     pub network: String,
+    /// Present only when ping samples were collected (`--ping` / `--all`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ping_rtts_ms: Vec<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ping_interval_ms: Option<u64>,
+    /// Negotiated VersionData; present after a successful handshake.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub handshake: Option<HandshakeInfo>,
+    /// Peer-sharing result; omitted when that action was not requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub peers: Option<Vec<String>>,
+    /// Chain-sync tip; omitted when that action was not requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tip: Option<TipInfo>,
+    /// Observability publications; omitted when observe was not requested / failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub publications: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub peer_checks: Vec<PeerCheck>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
 }
 
@@ -534,6 +548,15 @@ fn publications_json(message: &observability::Message) -> serde_json::Value {
         observability::Message::GetPublications => serde_json::json!({"type": "GetPublications"}),
         observability::Message::Publications(pubs) => {
             let items: Vec<_> = pubs.iter().map(publication_json).collect();
+            serde_json::json!({"type": "Publications", "items": items})
+        }
+        observability::Message::CachedPublications(_) => {
+            let items: Vec<_> = message
+                .logical_publications()
+                .unwrap_or_default()
+                .iter()
+                .map(publication_json)
+                .collect();
             serde_json::json!({"type": "Publications", "items": items})
         }
     }

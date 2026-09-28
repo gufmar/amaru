@@ -148,7 +148,7 @@ mod tests {
     fn test_initiator_protocol() {
         crate::observability::spec::<Initiator>().check(State::Idle, |msg| match msg {
             Message::GetPublications => Some(InitiatorAction::GetPublications),
-            Message::Publications(_) => None,
+            Message::Publications(_) | Message::CachedPublications(_) => None,
         });
     }
 }

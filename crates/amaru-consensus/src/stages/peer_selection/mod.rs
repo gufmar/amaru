@@ -17,6 +17,10 @@ use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap, btree_map::Entry},
     fmt::{self, Display},
     net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -63,6 +67,56 @@ fn churn_interval(seed: [u8; 32]) -> Duration {
     bytes.copy_from_slice(&seed[0..8]);
     let fuzz_secs = u64::from_le_bytes(bytes) % (CHURN_INTERVAL_FUZZ.as_secs() + 1);
     CHURN_INTERVAL_BASE + Duration::from_secs(fuzz_secs)
+}
+
+/// Live peer-connection counters for observability / metrics readers.
+///
+/// Updated by [`PeerSelection`] after each message; readers sample atomically.
+#[derive(Debug, Default)]
+pub struct PeerConnectionStats {
+    inbound: AtomicU64,
+    outbound: AtomicU64,
+    outbound_connecting: AtomicU64,
+    using: AtomicU64,
+    target_upstream: AtomicU64,
+    target_downstream: AtomicU64,
+}
+
+/// Consistent sample of [`PeerConnectionStats`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PeerConnectionSnapshot {
+    pub inbound: u64,
+    pub outbound: u64,
+    pub outbound_connecting: u64,
+    pub using: u64,
+    pub target_upstream: u64,
+    pub target_downstream: u64,
+}
+
+impl PeerConnectionStats {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    pub fn store(&self, snap: PeerConnectionSnapshot) {
+        self.inbound.store(snap.inbound, Ordering::Relaxed);
+        self.outbound.store(snap.outbound, Ordering::Relaxed);
+        self.outbound_connecting.store(snap.outbound_connecting, Ordering::Relaxed);
+        self.using.store(snap.using, Ordering::Relaxed);
+        self.target_upstream.store(snap.target_upstream, Ordering::Relaxed);
+        self.target_downstream.store(snap.target_downstream, Ordering::Relaxed);
+    }
+
+    pub fn snapshot(&self) -> PeerConnectionSnapshot {
+        PeerConnectionSnapshot {
+            inbound: self.inbound.load(Ordering::Relaxed),
+            outbound: self.outbound.load(Ordering::Relaxed),
+            outbound_connecting: self.outbound_connecting.load(Ordering::Relaxed),
+            using: self.using.load(Ordering::Relaxed),
+            target_upstream: self.target_upstream.load(Ordering::Relaxed),
+            target_downstream: self.target_downstream.load(Ordering::Relaxed),
+        }
+    }
 }
 
 /// Peer selection stage for the Amaru consensus node.
@@ -278,6 +332,9 @@ pub struct PeerSelection {
     churn_timer: Option<ScheduleId>,
     /// Peers demoted from Using that must not be re-promoted until this instant.
     demoted_until: BTreeMap<Peer, Instant>,
+    /// Optional live counters for observability (not part of stage equality / serde).
+    #[serde(skip)]
+    peer_stats: Option<Arc<PeerConnectionStats>>,
 }
 
 impl PartialEq for PeerSelection {
@@ -416,6 +473,7 @@ impl PeerSelection {
             share_request_interval: SHARE_REQUEST_INTERVAL,
             churn_timer: None,
             demoted_until: BTreeMap::new(),
+            peer_stats: None,
         }
     }
 
@@ -424,6 +482,45 @@ impl PeerSelection {
         self.share_request_initial_delay = initial;
         self.share_request_interval = interval;
         self
+    }
+
+    /// Attach a shared stats gauge updated after every stage message (observability).
+    pub fn with_peer_stats(mut self, stats: Arc<PeerConnectionStats>) -> Self {
+        self.peer_stats = Some(stats);
+        self
+    }
+
+    fn publish_peer_stats(&self) {
+        let Some(stats) = self.peer_stats.as_ref() else {
+            return;
+        };
+        let mut outbound = 0u64;
+        let mut outbound_connecting = 0u64;
+        let mut using = 0u64;
+        for state in self.outbound_peers.values() {
+            match state {
+                PeerState::Connecting => outbound_connecting += 1,
+                PeerState::Connected(conn) => {
+                    outbound += 1;
+                    if conn.local_use == LocalUse::Diffusion {
+                        using += 1;
+                    }
+                }
+            }
+        }
+        for conn in self.inbound_peers.values() {
+            if conn.local_use == LocalUse::Diffusion {
+                using += 1;
+            }
+        }
+        stats.store(PeerConnectionSnapshot {
+            inbound: self.inbound_peers.len() as u64,
+            outbound,
+            outbound_connecting,
+            using,
+            target_upstream: self.target_upstream_peers as u64,
+            target_downstream: self.target_downstream_peers as u64,
+        });
     }
 }
 
@@ -1096,6 +1193,7 @@ pub async fn stage(mut state: PeerSelection, msg: PeerSelectionMsg, eff: Effects
             state.try_promote(peer, conn_id, now, &eff).await;
         }
     }
+    state.publish_peer_stats();
     state
 }
 

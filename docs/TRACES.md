@@ -3202,6 +3202,7 @@ For information on how to use and filter these spans, see [monitoring/README.md]
 | `export_failed` | `TRACE` | public | OTLP export failed; collection may not be started for every signal | unavailable_signals |  |
 | `export_recovered` | `TRACE` | public | OTLP collection recovered for previously unavailable signals | recovered_signals |  |
 | `init` | `TRACE` | public | Observability stack initialization | with_open_telemetry, with_json_traces, with_colors |  |
+| `publications_config` | `TRACE` | public | Soft publications-config issue; node continues with remaining or default bags | reason, detail |  |
 
 <details><summary>span: `export_failed`</summary>
 
@@ -3226,6 +3227,15 @@ For information on how to use and filter these spans, see [monitoring/README.md]
 | `with_open_telemetry` | `boolean` | ✓ |
 | `with_json_traces` | `boolean` | ✓ |
 | `with_colors` | `boolean` | ✓ |
+
+</details>
+
+<details><summary>span: `publications_config`</summary>
+
+| field | type | required |
+| --- | --- | --- |
+| `reason` | `string` | ✓ |
+| `detail` | `string` | ✓ |
 
 </details>
 

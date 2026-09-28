@@ -63,7 +63,7 @@ pub async fn register_observability_responder<M: amaru_pure_stage::SendData>(
 #[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ObservabilityResponder {
     muxer: StageRef<MuxMessage>,
-    /// Pre-serialized logical cache (served unchanged on each GetPublications).
+    /// Pre-encoded MsgPublications CBOR bytes (served verbatim on each GetPublications).
     cached: Message,
 }
 
@@ -125,7 +125,7 @@ impl ProtocolState<Responder> for State {
     fn local(&self, input: Self::Action) -> anyhow::Result<(Outcome<Self::WireMsg, Void, Self::Error>, Self)> {
         Ok(match (self, input) {
             (State::Busy, ResponderAction::SendPublications(msg)) => match msg {
-                Message::Publications(_) => (outcome().send(msg), State::Done),
+                Message::Publications(_) | Message::CachedPublications(_) => (outcome().send(msg), State::Done),
                 other => anyhow::bail!("observability responder expected Publications cache, got {other:?}"),
             },
             (this, input) => anyhow::bail!("observability responder action: {this:?} <- {input:?}"),
@@ -152,6 +152,9 @@ mod tests {
     fn test_responder_protocol() {
         crate::observability::spec::<Responder>().check(State::Idle, |msg| match msg {
             Message::Publications(pubs) => Some(ResponderAction::SendPublications(Message::Publications(pubs.clone()))),
+            Message::CachedPublications(bytes) => {
+                Some(ResponderAction::SendPublications(Message::CachedPublications(bytes.clone())))
+            }
             Message::GetPublications => None,
         });
     }

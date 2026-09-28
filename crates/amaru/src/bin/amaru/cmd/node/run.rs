@@ -439,10 +439,11 @@ pub(crate) fn runnable(args: Args) -> Runnable {
 }
 
 async fn run(args: Args, meter: Meter, shutdown: ShutdownHandle) -> anyhow::Result<()> {
-    if std::env::var_os("AMARU_OBSERVABILITY").is_some() {
-        amaru::observability_publications::install_for_node(args.observability_config.as_deref())
-            .context("install observability publications provider")?;
-    }
+    let publications = if std::env::var_os("AMARU_OBSERVABILITY").is_some() {
+        Some(amaru::observability_publications::install_for_node(args.observability_config.as_deref()))
+    } else {
+        None
+    };
 
     let _pid_file = optional_pid_file(args.pid_file.clone());
 
@@ -456,6 +457,13 @@ async fn run(args: Args, meter: Meter, shutdown: ShutdownHandle) -> anyhow::Resu
     config.meter = Some(meter);
     // Explicit handle: node stages must run on this process's Tokio runtime.
     let running = build_and_run_node(config, &tokio::runtime::Handle::current())?;
+
+    let publications_refresher = publications.map(|mut pubs| {
+        // Share the live peer_selection gauge, then align immediately to the tip.
+        pubs.set_peer_stats(running.peer_connection_stats());
+        pubs.refresh_for_tip_slot(running.tip_slot());
+        pubs.spawn_refresher(running.tip_slot_source())
+    });
 
     // Main-thread signal path can abort stages without scheduling this future.
     shutdown.register_abort(running.abort_callback());
@@ -472,6 +480,9 @@ async fn run(args: Args, meter: Meter, shutdown: ShutdownHandle) -> anyhow::Resu
             dump_trace_buffer_to_file(trace_dump_path.as_deref(), &trace_buffer);
 
             if let Some(handle) = metrics.as_ref() {
+                handle.abort();
+            }
+            if let Some(handle) = publications_refresher.as_ref() {
                 handle.abort();
             }
 
@@ -513,6 +524,9 @@ async fn run(args: Args, meter: Meter, shutdown: ShutdownHandle) -> anyhow::Resu
     }
 
     if let Some(handle) = metrics {
+        handle.abort();
+    }
+    if let Some(handle) = publications_refresher {
         handle.abort();
     }
 

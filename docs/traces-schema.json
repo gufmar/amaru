@@ -8133,6 +8133,28 @@
       "description": "Observability stack initialization",
       "public": true
     },
+    "amaru::setup::observability::PUBLICATIONS_CONFIG": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "detail"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "publications_config",
+      "level": "TRACE",
+      "target": "amaru::setup::observability",
+      "description": "Soft publications-config issue; node continues with remaining or default bags",
+      "public": true
+    },
     "amaru::setup::peer_snapshot::EMPTY": {
       "type": "object",
       "properties": {

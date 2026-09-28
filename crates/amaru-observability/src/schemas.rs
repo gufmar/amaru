@@ -2624,6 +2624,14 @@ define_schemas! {
                     /// Comma-separated signals whose exporters connected successfully again
                     required recovered_signals: String
                 }
+                /// Soft publications-config issue; node continues with remaining or default bags
+                public PUBLICATIONS_CONFIG {
+                    /// reason ∈ {load_failed, unknown_field, duplicate_field, empty_items,
+                    /// encrypted_not_implemented, too_many_publications, no_valid_publications}
+                    required reason: String
+                    /// Human-readable detail (path, field id, index, error Display, …)
+                    required detail: String
+                }
             }
             build {
                 /// Running binary build/version identity (package version, git commit, target).

@@ -18,7 +18,7 @@
 
 use std::collections::BTreeMap;
 
-use amaru_kernel::cbor;
+use amaru_kernel::{NonEmptyBytes, cbor};
 
 /// Maximum publications in one `MsgPublications` (CDDL `*32`).
 pub const MAX_PUBLICATIONS: usize = 32;
@@ -72,23 +72,45 @@ pub enum Publication {
 pub enum Message {
     GetPublications,
     Publications(Vec<Publication>),
+    /// Pre-encoded `MsgPublications` CBOR. Encode writes these bytes verbatim so the
+    /// observe hot path never re-serializes. Not produced by Decode (wire peers send
+    /// the logical [`Self::Publications`] form).
+    CachedPublications(NonEmptyBytes),
 }
 
 impl Message {
     pub fn message_type(&self) -> &'static str {
         match self {
             Message::GetPublications => "GetPublications",
-            Message::Publications(_) => "Publications",
+            Message::Publications(_) | Message::CachedPublications(_) => "Publications",
         }
     }
 
-    /// Stub cached response: one open publication for Amaru.
+    /// Stub cached response: one open publication for Amaru (pre-encoded).
     pub fn stub_cache(snapshot_slot: u64, major: u16) -> Self {
-        Message::Publications(vec![Publication::Open {
+        Self::cache_publications(vec![Publication::Open {
             version: PUBLICATION_VERSION,
             snapshot_slot,
             payload: OpenPayload::stub_amaru(major),
         }])
+    }
+
+    /// Build a wire reply that Encode serves as already-serialized CBOR bytes.
+    pub fn cache_publications(pubs: Vec<Publication>) -> Self {
+        let logical = Message::Publications(pubs);
+        Message::CachedPublications(NonEmptyBytes::encode(&logical))
+    }
+
+    /// Decode a cached bag back to the logical publications list (for tests / tooling).
+    pub fn logical_publications(&self) -> Option<Vec<Publication>> {
+        match self {
+            Message::Publications(pubs) => Some(pubs.clone()),
+            Message::CachedPublications(bytes) => match cbor::decode::<Message>(bytes.as_ref()) {
+                Ok(Message::Publications(pubs)) => Some(pubs),
+                _ => None,
+            },
+            Message::GetPublications => None,
+        }
     }
 }
 
@@ -343,6 +365,10 @@ impl<C> cbor::Encode<C> for Message {
                     p.encode(e, ctx)?;
                 }
             }
+            Message::CachedPublications(bytes) => {
+                // Verbatim CBOR item: no structural re-encode on the observe hot path.
+                e.writer_mut().write_all(bytes.as_ref()).map_err(cbor::encode::Error::write)?;
+            }
         }
         Ok(())
     }
@@ -499,5 +525,19 @@ mod tests {
         }]);
         let encoded = to_cbor(&msg);
         assert_eq!(encoded, load_vector("msg_publications_one_open"));
+    }
+
+    #[test]
+    fn cached_publications_encode_matches_logical_bytes() {
+        let pubs = vec![Publication::Open {
+            version: PUBLICATION_VERSION,
+            snapshot_slot: 123456600,
+            payload: OpenPayload::stub_amaru(1),
+        }];
+        let logical = Message::Publications(pubs.clone());
+        let cached = Message::cache_publications(pubs);
+        assert_eq!(to_cbor(&logical), to_cbor(&cached));
+        assert_eq!(to_cbor(&cached), load_vector("msg_publications_one_open"));
+        assert_eq!(cached.logical_publications().unwrap().len(), 1);
     }
 }
