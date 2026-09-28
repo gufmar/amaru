@@ -245,8 +245,9 @@ pub struct Args {
 
     /// Path to a TOML file describing observability publications (experimental mux 11).
     ///
-    /// Only used when `AMARU_OBSERVABILITY` is set. When omitted, a default auto
-    /// publication is installed (version, git revision, CPU cores, process RSS).
+    /// Only used when `AMARU_OBSERVABILITY` is set. The file selects which built-in
+    /// fields appear in which `[[publication]]` bags; it cannot override identity
+    /// values. When omitted, one open publication with every known field is installed.
     /// Also via `AMARU_OBSERVABILITY_CONFIG`.
     #[arg(
         long,
