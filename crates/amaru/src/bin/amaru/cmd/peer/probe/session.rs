@@ -63,14 +63,36 @@ pub struct HandshakeInfo {
     pub peras_support: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TipInfo {
+    pub slot: u64,
+    pub block_height: u64,
+    pub hash: String,
+}
+
+impl TipInfo {
+    pub fn from_point(point: Point) -> Self {
+        match point {
+            Point::Origin => Self { slot: 0, block_height: 0, hash: "origin".to_string() },
+            Point::Specific(slot, hash, height) => Self {
+                slot: slot.as_u64(),
+                block_height: height.as_u64(),
+                hash: hash.to_string(),
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct ProbeReport {
     pub address: String,
     pub network: String,
-    pub ping_rtt_ms: Option<u64>,
+    pub ping_rtts_ms: Vec<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ping_interval_ms: Option<u64>,
     pub handshake: Option<HandshakeInfo>,
     pub peers: Option<Vec<String>>,
-    pub tip: Option<String>,
+    pub tip: Option<TipInfo>,
     pub publications: Option<serde_json::Value>,
     pub peer_checks: Vec<PeerCheck>,
     pub errors: Vec<String>,
@@ -81,6 +103,8 @@ pub struct PeerCheck {
     pub address: String,
     pub ok: bool,
     pub detail: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ping_rtt_ms: Option<u64>,
     pub publications: Option<serde_json::Value>,
 }
 
@@ -88,7 +112,7 @@ pub struct PeerCheck {
 pub struct SessionPartial {
     pub handshake: Option<HandshakeInfo>,
     pub peers: Option<Vec<String>>,
-    pub tip: Option<String>,
+    pub tip: Option<TipInfo>,
     pub publications: Option<serde_json::Value>,
     pub errors: Vec<String>,
 }
@@ -281,7 +305,7 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
             match msg.msg {
                 CsResult::Initialize => state,
                 CsResult::IntersectFound(_, tip) | CsResult::IntersectNotFound(tip) => {
-                    state.partial.tip = Some(format_point(tip));
+                    state.partial.tip = Some(TipInfo::from_point(tip));
                     eff.clear_timeout_at(2).await;
                     eff.send(&msg.handler, CsLocal::Done).await;
                     advance_after_tip(state, &eff).await
@@ -289,7 +313,7 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
                 CsResult::RollForward(_, tip) | CsResult::RollBackward(_, tip) => {
                     // Prefer intersect tip; keep last tip if somehow still streaming.
                     if state.partial.tip.is_none() {
-                        state.partial.tip = Some(format_point(tip));
+                        state.partial.tip = Some(TipInfo::from_point(tip));
                     }
                     state
                 }
@@ -503,10 +527,6 @@ async fn finish(mut state: Driver, eff: &Effects<DriverMsg>) -> Driver {
 
 fn format_refuse(reason: &RefuseReason) -> String {
     format!("{reason:?}")
-}
-
-fn format_point(point: Point) -> String {
-    point.to_string()
 }
 
 fn publications_json(message: &observability::Message) -> serde_json::Value {

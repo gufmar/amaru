@@ -159,13 +159,13 @@ pub mod env_vars {
     /// --peer-address
     pub const PEER_ADDRESS: &str = "AMARU_PEER_ADDRESS";
 
-    /// --connect-timeout (peer probe)
+    /// --connect-timeout (peer probe, milliseconds)
     pub const PROBE_CONNECT_TIMEOUT: &str = "AMARU_PROBE_CONNECT_TIMEOUT";
 
-    /// --handshake-timeout (peer probe)
+    /// --handshake-timeout (peer probe, milliseconds)
     pub const PROBE_HANDSHAKE_TIMEOUT: &str = "AMARU_PROBE_HANDSHAKE_TIMEOUT";
 
-    /// --protocol-timeout (peer probe)
+    /// --protocol-timeout (peer probe, milliseconds)
     pub const PROBE_PROTOCOL_TIMEOUT: &str = "AMARU_PROBE_PROTOCOL_TIMEOUT";
 
     /// --peer-snapshot
