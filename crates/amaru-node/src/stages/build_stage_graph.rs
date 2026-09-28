@@ -191,6 +191,8 @@ pub fn build_stage_graph(
         .with_blockfetch_pipeline_n(config.blockfetch_pipeline_n);
     // Experimental observability mini-protocol (draft observability-CIP).
     // Opt in with: AMARU_OBSERVABILITY=1
+    // Optional publications TOML: AMARU_OBSERVABILITY_CONFIG / --observability-config
+    // (product binary installs the provider before build_and_run_node).
     if std::env::var_os("AMARU_OBSERVABILITY").is_some() {
         manager_config = manager_config
             .with_max_n2n_version(VersionNumber::V16)

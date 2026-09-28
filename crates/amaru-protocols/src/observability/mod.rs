@@ -16,6 +16,7 @@
 //!
 //! One-shot: `MsgGetPublications` → `MsgPublications` → Done (no Done wire message).
 
+mod cache;
 mod initiator;
 mod messages;
 mod responder;
@@ -23,6 +24,7 @@ mod responder;
 use amaru_kernel::Peer;
 use amaru_ouroboros::ConnectionId;
 use amaru_pure_stage::{DeserializerGuards, Effects, StageRef};
+pub use cache::{publications_cache, set_publications_provider};
 pub use initiator::{InitiatorMessage, InitiatorResult, ObservabilityInitiator, initiator};
 pub use messages::{
     ExperimentalValue, MAX_CIPHERTEXT_BYTES, MAX_MESSAGE_BYTES, MAX_PUBLICATIONS, Message, OBSERVER_PUBLIC_KEY_LEN,

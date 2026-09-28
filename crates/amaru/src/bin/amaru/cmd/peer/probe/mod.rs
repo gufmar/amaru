@@ -211,6 +211,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let handshake_timeout = Duration::from_millis(args.handshake_timeout_ms);
     let protocol_timeout = Duration::from_millis(args.protocol_timeout_ms);
     let color = color_enabled();
+    // Stream long-running human steps as they complete; JSON stays one final document.
+    let stream = !args.json;
 
     let mut report = session::ProbeReport {
         address: args.address.clone(),
@@ -225,13 +227,21 @@ async fn run(args: Args) -> anyhow::Result<()> {
         errors: Vec::new(),
     };
 
+    if stream {
+        print_probe_header(&report, color);
+    }
+
     if let Some(spec) = actions.ping {
         report.ping_interval_ms = Some(spec.interval.as_millis() as u64);
-        match run_pings(peer, connect_timeout, spec).await {
+        match run_pings(peer, connect_timeout, spec, stream.then_some(color)).await {
             Ok(samples) => report.ping_rtts_ms = samples,
             Err(err) => {
                 report.errors.push(format!("connect: {err:#}"));
-                emit(&report, args.json, color)?;
+                if stream {
+                    print_errors(&report.errors, color);
+                } else {
+                    emit(&report, args.json, color)?;
+                }
                 bail!("TCP connect failed");
             }
         }
@@ -261,92 +271,165 @@ async fn run(args: Args) -> anyhow::Result<()> {
             }
             Err(err) => report.errors.push(format!("session: {err:#}")),
         }
+        if stream {
+            print_session_sections(&report, color, /*include_pscheck*/ false);
+        }
     }
 
     if actions.pscheck {
         let peers = report.peers.clone().unwrap_or_default();
+        let mut pscheck_header = stream && !peers.is_empty();
         for addr in peers {
-            let Ok(peer) = addr.parse::<Peer>() else {
-                report.peer_checks.push(session::PeerCheck {
-                    address: addr,
-                    ok: false,
-                    detail: "invalid peer address from share".to_string(),
-                    ping_rtt_ms: None,
-                    publications: None,
-                });
-                continue;
-            };
-
-            let ping_rtt_ms = match session::tcp_ping(peer, connect_timeout).await {
-                Ok(rtt) => Some(rtt.as_millis() as u64),
-                Err(err) => {
-                    report.peer_checks.push(session::PeerCheck {
-                        address: addr.clone(),
-                        ok: false,
-                        detail: format!("ping failed: {err:#}"),
-                        ping_rtt_ms: None,
-                        publications: None,
-                    });
-                    continue;
-                }
-            };
-
-            match session::run_session(session::SessionRequest {
-                peer,
-                network: args.network,
+            let check = run_pscheck_one(
+                &addr,
+                args.network,
                 connect_timeout,
                 handshake_timeout,
                 protocol_timeout,
-                want_handshake: true,
-                want_peershare: false,
-                want_tip: false,
-                want_observe: true,
-                peer_share_amount: 10,
-            })
-            .await
-            {
-                Ok(partial) => {
-                    let ok = partial.publications.is_some() && partial.errors.is_empty();
-                    let detail = if ok {
-                        "observe ok".to_string()
-                    } else if let Some(err) = partial.errors.first() {
-                        err.clone()
-                    } else {
-                        "no publications".to_string()
-                    };
-                    report.peer_checks.push(session::PeerCheck {
-                        address: addr,
-                        ok,
-                        detail,
-                        ping_rtt_ms,
-                        publications: partial.publications,
-                    });
+            )
+            .await;
+            if stream {
+                if pscheck_header {
+                    let (ok, _, _, _, _, reset) = color_palette(color);
+                    println!("  {ok}pscheck{reset}");
+                    flush_stdout();
+                    pscheck_header = false;
                 }
-                Err(err) => report.peer_checks.push(session::PeerCheck {
-                    address: addr,
-                    ok: false,
-                    detail: format!("{err:#}"),
-                    ping_rtt_ms,
-                    publications: None,
-                }),
+                print_pscheck_progress(&check, color);
             }
+            report.peer_checks.push(check);
         }
     }
 
-    emit(&report, args.json, color)?;
+    if args.json {
+        emit(&report, true, color)?;
+    } else if !stream {
+        // Should not happen: stream is `!json`. Kept for clarity.
+        emit(&report, false, color)?;
+    }
+    // Human streaming already printed each section as it completed.
+
     if !report.errors.is_empty() {
         bail!("probe completed with errors");
     }
     Ok(())
 }
 
-async fn run_pings(peer: Peer, connect_timeout: Duration, spec: PingSpec) -> anyhow::Result<Vec<u64>> {
+async fn run_pscheck_one(
+    addr: &str,
+    network: NetworkName,
+    connect_timeout: Duration,
+    handshake_timeout: Duration,
+    protocol_timeout: Duration,
+) -> session::PeerCheck {
+    let Ok(peer) = addr.parse::<Peer>() else {
+        return session::PeerCheck {
+            address: addr.to_string(),
+            ok: false,
+            detail: "invalid peer address from share".to_string(),
+            ping_rtt_ms: None,
+            publications: None,
+        };
+    };
+
+    let ping_rtt_ms = match session::tcp_ping(peer, connect_timeout).await {
+        Ok(rtt) => Some(rtt.as_millis() as u64),
+        Err(err) => {
+            return session::PeerCheck {
+                address: addr.to_string(),
+                ok: false,
+                detail: format!("ping failed: {err:#}"),
+                ping_rtt_ms: None,
+                publications: None,
+            };
+        }
+    };
+
+    match session::run_session(session::SessionRequest {
+        peer,
+        network,
+        connect_timeout,
+        handshake_timeout,
+        protocol_timeout,
+        want_handshake: true,
+        want_peershare: false,
+        want_tip: false,
+        want_observe: true,
+        peer_share_amount: 10,
+    })
+    .await
+    {
+        Ok(partial) => {
+            let ok = partial.publications.is_some() && partial.errors.is_empty();
+            let detail = if ok {
+                "observe ok".to_string()
+            } else if let Some(err) = partial.errors.first() {
+                err.clone()
+            } else {
+                "no publications".to_string()
+            };
+            session::PeerCheck {
+                address: addr.to_string(),
+                ok,
+                detail,
+                ping_rtt_ms,
+                publications: partial.publications,
+            }
+        }
+        Err(err) => session::PeerCheck {
+            address: addr.to_string(),
+            ok: false,
+            detail: format!("{err:#}"),
+            ping_rtt_ms,
+            publications: None,
+        },
+    }
+}
+
+async fn run_pings(
+    peer: Peer,
+    connect_timeout: Duration,
+    spec: PingSpec,
+    stream_color: Option<bool>,
+) -> anyhow::Result<Vec<u64>> {
     let mut samples = Vec::with_capacity(spec.count as usize);
+    let palette = stream_color.map(|c| color_palette(c));
+
+    if let Some((ok, _, _, _, _, reset)) = palette {
+        println!("  {ok}ping{reset}");
+        if spec.count > 1 {
+            println!("    count:            {}", spec.count);
+            println!("    interval:         {} ms", spec.interval.as_millis());
+        }
+        flush_stdout();
+    }
+
     for i in 0..spec.count {
         let rtt = session::tcp_ping(peer, connect_timeout).await?;
-        samples.push(rtt.as_millis() as u64);
+        let ms = rtt.as_millis() as u64;
+        samples.push(ms);
+        if let Some((_, _, _, _, _, reset)) = palette {
+            if spec.count == 1 {
+                println!("    rtt:              {ms} ms{reset}");
+            } else {
+                println!("    {:<18} {ms} ms", format!("{}:", i + 1));
+            }
+            flush_stdout();
+        }
         if i + 1 < spec.count {
             tokio::time::sleep(spec.interval).await;
+        }
+    }
+
+    if let Some((_, _, _, _, _, _)) = palette {
+        if samples.len() > 1 {
+            let min = samples.iter().copied().min().unwrap_or(0);
+            let max = samples.iter().copied().max().unwrap_or(0);
+            let avg = samples.iter().sum::<u64>() / samples.len() as u64;
+            println!("    min:              {min} ms");
+            println!("    avg:              {avg} ms");
+            println!("    max:              {max} ms");
+            flush_stdout();
         }
     }
     Ok(samples)
@@ -356,23 +439,39 @@ fn emit(report: &session::ProbeReport, json: bool, color: bool) -> anyhow::Resul
     if json {
         println!("{}", serde_json::to_string_pretty(report)?);
     } else {
-        print_human(report, color);
+        print_probe_header(report, color);
+        if !report.ping_rtts_ms.is_empty() {
+            print_ping_section_buffered(report, color);
+        }
+        print_session_sections(report, color, /*include_pscheck*/ true);
     }
     Ok(())
 }
 
-fn print_human(report: &session::ProbeReport, color: bool) {
-    let (ok, warn, err, cyan, bold, reset) = if color {
+type Palette = (&'static str, &'static str, &'static str, &'static str, &'static str, &'static str);
+
+fn color_palette(color: bool) -> Palette {
+    if color {
         ("\x1b[32m", "\x1b[33m", "\x1b[31m", "\x1b[36m", "\x1b[1m", "\x1b[0m")
     } else {
         ("", "", "", "", "", "")
-    };
-
-    println!("{bold}probe{reset} {cyan}{}{reset} ({})", report.address, report.network);
-
-    if !report.ping_rtts_ms.is_empty() {
-        print_ping_section(report, ok, reset);
     }
+}
+
+fn flush_stdout() {
+    let _ = io::Write::flush(&mut io::stdout());
+}
+
+fn print_probe_header(report: &session::ProbeReport, color: bool) {
+    let (_, _, _, cyan, bold, reset) = color_palette(color);
+    println!("{bold}probe{reset} {cyan}{}{reset} ({})", report.address, report.network);
+    flush_stdout();
+}
+
+/// Handshake / tip / peershare / observe (and optionally already-collected pscheck rows).
+fn print_session_sections(report: &session::ProbeReport, color: bool, include_pscheck: bool) {
+    let (ok, warn, _err, _, _, reset) = color_palette(color);
+
     if let Some(hs) = &report.handshake {
         println!("  {ok}handshake{reset}");
         println!("    version:          {}", hs.version);
@@ -391,45 +490,88 @@ fn print_human(report: &session::ProbeReport, color: bool) {
     if let Some(peers) = &report.peers {
         println!("  {ok}peershare{reset}  {} peer(s)", peers.len());
         for p in peers {
-            if let Some(check) = report.peer_checks.iter().find(|c| c.address == *p) {
-                let ping = match check.ping_rtt_ms {
-                    Some(ms) => format!("{ms} ms"),
-                    None => "ping failed".to_string(),
-                };
-                let tag = if check.ok { ok } else { warn };
-                println!("    {p}  {ping}  {tag}{}{reset}", check.detail);
-            } else {
-                println!("    {p}");
+            if include_pscheck {
+                if let Some(check) = report.peer_checks.iter().find(|c| c.address == *p) {
+                    print_peershare_check_line(p, check, ok, warn, reset);
+                    continue;
+                }
             }
+            println!("    {p}");
         }
     }
     if let Some(pubs) = &report.publications {
         println!("  {ok}observe{reset}");
         print_publications_human(pubs, "    ");
     }
-    for check in &report.peer_checks {
-        // Details already shown on peershare lines when address matches; only dump extras
-        // for checks without a peershare row (should not happen) or open publications.
-        if report.peers.as_ref().is_some_and(|ps| ps.iter().any(|p| p == &check.address)) {
-            if let Some(pubs) = &check.publications {
-                println!("      observe {}", check.address);
-                print_publications_human(pubs, "        ");
+    if include_pscheck {
+        for check in &report.peer_checks {
+            if report.peers.as_ref().is_some_and(|ps| ps.iter().any(|p| p == &check.address)) {
+                if let Some(pubs) = &check.publications {
+                    println!("      observe {}", check.address);
+                    print_publications_human(pubs, "        ");
+                }
+                continue;
             }
-            continue;
-        }
-        let tag = if check.ok { ok } else { warn };
-        let ping = check.ping_rtt_ms.map(|ms| format!("{ms} ms")).unwrap_or_else(|| "-".to_string());
-        println!("  {tag}pscheck{reset}  {}  ping {ping}  {}", check.address, check.detail);
-        if let Some(pubs) = &check.publications {
-            print_publications_human(pubs, "           ");
+            print_orphan_pscheck(check, ok, warn, reset);
         }
     }
-    for e in &report.errors {
-        println!("  {err}error{reset}   {e}");
+    print_errors(&report.errors, color);
+    flush_stdout();
+}
+
+fn print_peershare_check_line(
+    addr: &str,
+    check: &session::PeerCheck,
+    ok: &str,
+    warn: &str,
+    reset: &str,
+) {
+    let ping = match check.ping_rtt_ms {
+        Some(ms) => format!("{ms} ms"),
+        None => "ping failed".to_string(),
+    };
+    let tag = if check.ok { ok } else { warn };
+    println!("    {addr}  {ping}  {tag}{}{reset}", check.detail);
+    if let Some(pubs) = &check.publications {
+        println!("      observe {addr}");
+        print_publications_human(pubs, "        ");
     }
 }
 
-fn print_ping_section(report: &session::ProbeReport, ok: &str, reset: &str) {
+fn print_orphan_pscheck(check: &session::PeerCheck, ok: &str, warn: &str, reset: &str) {
+    let tag = if check.ok { ok } else { warn };
+    let ping = check.ping_rtt_ms.map(|ms| format!("{ms} ms")).unwrap_or_else(|| "-".to_string());
+    println!("  {tag}pscheck{reset}  {}  ping {ping}  {}", check.address, check.detail);
+    if let Some(pubs) = &check.publications {
+        print_publications_human(pubs, "           ");
+    }
+}
+
+/// Live line for one finished pscheck (human streaming mode).
+fn print_pscheck_progress(check: &session::PeerCheck, color: bool) {
+    let (ok, warn, _, _, _, reset) = color_palette(color);
+    let tag = if check.ok { ok } else { warn };
+    let ping = check.ping_rtt_ms.map(|ms| format!("{ms} ms")).unwrap_or_else(|| "-".to_string());
+    println!("    {}  ping {ping}  {tag}{}{reset}", check.address, check.detail);
+    if let Some(pubs) = &check.publications {
+        print_publications_human(pubs, "      ");
+    }
+    flush_stdout();
+}
+
+fn print_errors(errors: &[String], color: bool) {
+    if errors.is_empty() {
+        return;
+    }
+    let (_, _, err, _, _, reset) = color_palette(color);
+    for e in errors {
+        println!("  {err}error{reset}   {e}");
+    }
+    flush_stdout();
+}
+
+fn print_ping_section_buffered(report: &session::ProbeReport, color: bool) {
+    let (ok, _, _, _, _, reset) = color_palette(color);
     let samples = &report.ping_rtts_ms;
     println!("  {ok}ping{reset}");
     if samples.len() == 1 {

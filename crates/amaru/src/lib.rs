@@ -21,6 +21,7 @@ pub mod exit;
 pub mod lifecycle;
 pub mod metrics;
 pub mod observability;
+pub mod observability_publications;
 pub mod panic;
 pub mod version;
 
@@ -167,6 +168,9 @@ pub mod env_vars {
 
     /// --protocol-timeout (peer probe, milliseconds)
     pub const PROBE_PROTOCOL_TIMEOUT: &str = "AMARU_PROBE_PROTOCOL_TIMEOUT";
+
+    /// --observability-config (publications TOML for experimental mux 11)
+    pub const OBSERVABILITY_CONFIG: &str = "AMARU_OBSERVABILITY_CONFIG";
 
     /// --peer-snapshot
     pub const PEER_SNAPSHOT: &str = "AMARU_PEER_SNAPSHOT";

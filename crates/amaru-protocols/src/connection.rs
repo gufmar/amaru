@@ -29,7 +29,7 @@ use crate::{
     manager::{ManagerConfig, ManagerMessage},
     mux::{self, MuxMessage},
     peer_sharing::{PeerSharingMessage, ShareResult, register_peer_sharing_initiator, register_peer_sharing_responder},
-    observability::{Message as ObservabilityMessage, register_observability_responder},
+    observability::register_observability_responder,
     protocol::{
         Inputs, PROTO_HANDSHAKE, PROTO_N2N_BLOCK_FETCH, PROTO_N2N_CHAIN_SYNC, PROTO_N2N_KEEP_ALIVE,
         PROTO_N2N_PEER_SHARE, PROTO_N2N_TX_SUB, Role,
@@ -523,7 +523,7 @@ async fn register_responders(mut s: Established, params: &Params, eff: &Effects<
     if config.observability_enabled && s.version_number >= VersionNumber::V16 {
         register_observability_responder(
             &s.muxer,
-            ObservabilityMessage::stub_cache(0, 0),
+            crate::observability::publications_cache(),
             eff,
             ConnectionMessage::ChildDied(ChildId::Responder),
         )

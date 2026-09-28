@@ -243,6 +243,20 @@ pub struct Args {
     )]
     peer_mix: String,
 
+    /// Path to a TOML file describing observability publications (experimental mux 11).
+    ///
+    /// Only used when `AMARU_OBSERVABILITY` is set. When omitted, a default auto
+    /// publication is installed (version, git revision, CPU cores, process RSS).
+    /// Also via `AMARU_OBSERVABILITY_CONFIG`.
+    #[arg(
+        long,
+        value_name = amaru::value_names::FILEPATH,
+        env = amaru::env_vars::OBSERVABILITY_CONFIG,
+        display_order = 0,
+        help_heading = "Advanced Options",
+    )]
+    observability_config: Option<PathBuf>,
+
     /// Path to the PID file managed by Amaru.
     #[arg(
         long,
@@ -424,6 +438,11 @@ pub(crate) fn runnable(args: Args) -> Runnable {
 }
 
 async fn run(args: Args, meter: Meter, shutdown: ShutdownHandle) -> anyhow::Result<()> {
+    if std::env::var_os("AMARU_OBSERVABILITY").is_some() {
+        amaru::observability_publications::install_for_node(args.observability_config.as_deref())
+            .context("install observability publications provider")?;
+    }
+
     let _pid_file = optional_pid_file(args.pid_file.clone());
 
     let mut config = parse_args(args)?;
