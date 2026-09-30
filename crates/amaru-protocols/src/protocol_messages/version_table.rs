@@ -42,8 +42,16 @@ impl VersionTable<VersionData> {
     }
 
     pub fn query(network_magic: NetworkMagic) -> VersionTable<VersionData> {
+        Self::query_through(VersionNumber::CURRENT, network_magic)
+    }
+
+    /// Handshake **query** offer from V11 through `max` (`query = true`).
+    ///
+    /// The peer replies with [`Message::QueryReply`] listing every version it speaks; the
+    /// connection does not become a diffusion session.
+    pub fn query_through(max: VersionNumber, network_magic: NetworkMagic) -> VersionTable<VersionData> {
         let data = VersionData::new(network_magic, false, PeerSharing::Disabled, true, false);
-        Self::from_v11_through(VersionNumber::CURRENT, data)
+        Self::from_v11_through(max, data)
     }
 
     /// Handshake offer from V11 through [`VersionNumber::CURRENT`] (V15).
@@ -55,7 +63,10 @@ impl VersionTable<VersionData> {
         Self::v11_through(VersionNumber::CURRENT, network_magic, initiator_only_diffusion_mode, advertisable)
     }
 
-    /// Handshake offer from V11 up to and including `max` (clamped to [`VersionNumber::CURRENT`]).
+    /// Handshake offer from V11 up to and including `max`.
+    ///
+    /// Only versions in [`VersionNumber::SUPPORTED`] that are `<= max` are included.
+    /// Passing a value above [`VersionNumber::HIGHEST`] has the same effect as `HIGHEST`.
     pub fn v11_through(
         max: VersionNumber,
         network_magic: NetworkMagic,
@@ -231,6 +242,13 @@ pub(crate) mod tests {
         let table = VersionTable::v11_through(VersionNumber::V16, NetworkMagic::PREPROD, false, true);
         assert!(table.values.contains_key(&VersionNumber::V16));
         assert_eq!(table.values.keys().next_back().copied(), Some(VersionNumber::V16));
+    }
+
+    #[test]
+    fn v11_through_highest_matches_supported_top() {
+        let table = VersionTable::v11_through(VersionNumber::HIGHEST, NetworkMagic::PREPROD, false, true);
+        assert_eq!(table.values.keys().next_back().copied(), Some(VersionNumber::HIGHEST));
+        assert_eq!(VersionNumber::HIGHEST, *VersionNumber::SUPPORTED.last().unwrap());
     }
 
     #[test]

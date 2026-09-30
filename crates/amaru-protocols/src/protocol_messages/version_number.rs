@@ -45,14 +45,22 @@ impl VersionNumber {
     /// Experimental N2N version (Peras VersionData field upstream; Amaru observability prototype).
     pub const V16: VersionNumber = VersionNumber::new(16);
 
-    /// Highest node-to-node version offered by default.
+    /// Production node default max N2N version in handshake offers.
     ///
     /// Remains V15 so V16 stays opt-in via [`ManagerConfig::max_n2n_version`](crate::manager::ManagerConfig).
+    /// Probe / lab clients prefer [`HIGHEST`] instead.
     pub const CURRENT: VersionNumber = Self::V15;
 
     /// Versions this node can encode, in ascending order.
+    ///
+    /// Extend this list when Amaru gains a new N2N VersionData codec; [`HIGHEST`] follows automatically.
     pub const SUPPORTED: [VersionNumber; 6] =
         [Self::V11, Self::V12, Self::V13, Self::V14, Self::V15, Self::V16];
+
+    /// Highest N2N version this stack knows how to speak (last entry of [`SUPPORTED`]).
+    ///
+    /// Use for clients that should always propose the full codec range (e.g. `amaru peer probe`).
+    pub const HIGHEST: VersionNumber = Self::SUPPORTED[Self::SUPPORTED.len() - 1];
 
     pub const fn new(value: u64) -> Self {
         Self(value)

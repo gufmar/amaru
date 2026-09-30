@@ -20,8 +20,8 @@ use std::collections::BTreeMap;
 
 use amaru_kernel::{NonEmptyBytes, cbor};
 
-/// Maximum publications in one `MsgPublications` (CDDL `*32`).
-pub const MAX_PUBLICATIONS: usize = 32;
+/// Maximum publications in one `MsgPublications` (CDDL `*6`).
+pub const MAX_PUBLICATIONS: usize = 6;
 
 /// Maximum encoded ciphertext bytes per encrypted publication.
 pub const MAX_CIPHERTEXT_BYTES: usize = 16384;
@@ -32,8 +32,11 @@ pub const OBSERVER_PUBLIC_KEY_LEN: usize = 32;
 /// Only `publicationVersion = 1` is defined for this prototype.
 pub const PUBLICATION_VERSION: u64 = 1;
 
-/// Maximum mux buffer / encoded MsgPublications size (codec/mux limit).
-pub const MAX_MESSAGE_BYTES: usize = 65535;
+/// Maximum encoded `MsgPublications` size (whole response / mux buffer).
+pub const MAX_MESSAGE_BYTES: usize = 16384;
+
+/// Maximum encoded `openPayload` map size per open publication.
+pub const MAX_OPEN_PAYLOAD_BYTES: usize = 8192;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum ExperimentalValue {
@@ -48,69 +51,81 @@ pub enum ExperimentalValue {
 pub struct OpenPayload {
     pub node_name: Option<String>,
     pub node_version_major: Option<u16>,
+    pub node_version_minor: Option<u16>,
+    pub node_version_patch: Option<u16>,
+    pub node_type: Option<String>,
+    pub git_revision: Option<String>,
     pub experimental: BTreeMap<String, ExperimentalValue>,
 }
 
 impl OpenPayload {
     pub fn stub_amaru(major: u16) -> Self {
-        Self { node_name: Some("amaru".to_string()), node_version_major: Some(major), experimental: BTreeMap::new() }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
-pub enum Publication {
-    Open { version: u64, snapshot_slot: u64, payload: OpenPayload },
-    Encrypted {
-        version: u64,
-        snapshot_slot: u64,
-        observer_public_key: [u8; OBSERVER_PUBLIC_KEY_LEN],
-        ciphertext: Vec<u8>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
-pub enum Message {
-    GetPublications,
-    Publications(Vec<Publication>),
-    /// Pre-encoded `MsgPublications` CBOR. Encode writes these bytes verbatim so the
-    /// observe hot path never re-serializes. Not produced by Decode (wire peers send
-    /// the logical [`Self::Publications`] form).
-    CachedPublications(NonEmptyBytes),
-}
-
-impl Message {
-    pub fn message_type(&self) -> &'static str {
-        match self {
-            Message::GetPublications => "GetPublications",
-            Message::Publications(_) | Message::CachedPublications(_) => "Publications",
+        Self {
+            node_name: Some("amaru".to_string()),
+            node_version_major: Some(major),
+            experimental: BTreeMap::new(),
+            ..Default::default()
         }
     }
 
-    /// Stub cached response: one open publication for Amaru (pre-encoded).
-    pub fn stub_cache(snapshot_slot: u64, major: u16) -> Self {
-        Self::cache_publications(vec![Publication::Open {
-            version: PUBLICATION_VERSION,
-            snapshot_slot,
-            payload: OpenPayload::stub_amaru(major),
-        }])
-    }
-
-    /// Build a wire reply that Encode serves as already-serialized CBOR bytes.
-    pub fn cache_publications(pubs: Vec<Publication>) -> Self {
-        let logical = Message::Publications(pubs);
-        Message::CachedPublications(NonEmptyBytes::encode(&logical))
-    }
-
-    /// Decode a cached bag back to the logical publications list (for tests / tooling).
-    pub fn logical_publications(&self) -> Option<Vec<Publication>> {
-        match self {
-            Message::Publications(pubs) => Some(pubs.clone()),
-            Message::CachedPublications(bytes) => match cbor::decode::<Message>(bytes.as_ref()) {
-                Ok(Message::Publications(pubs)) => Some(pubs),
-                _ => None,
-            },
-            Message::GetPublications => None,
+    fn map_entry_count(&self) -> u64 {
+        let mut n = 0u64;
+        if self.node_name.is_some() {
+            n += 1;
         }
+        if self.node_version_major.is_some() {
+            n += 1;
+        }
+        if self.node_version_minor.is_some() {
+            n += 1;
+        }
+        if self.node_version_patch.is_some() {
+            n += 1;
+        }
+        if self.node_type.is_some() {
+            n += 1;
+        }
+        if self.git_revision.is_some() {
+            n += 1;
+        }
+        n + self.experimental.len() as u64
+    }
+
+    fn encode_map<C, W: cbor::encode::Write>(
+        &self,
+        e: &mut cbor::Encoder<W>,
+        ctx: &mut C,
+    ) -> Result<(), cbor::encode::Error<W::Error>> {
+        e.map(self.map_entry_count())?;
+        if let Some(name) = &self.node_name {
+            e.u64(1)?;
+            e.str(name)?;
+        }
+        if let Some(major) = self.node_version_major {
+            e.u64(2)?;
+            e.u16(major)?;
+        }
+        if let Some(minor) = self.node_version_minor {
+            e.u64(3)?;
+            e.u16(minor)?;
+        }
+        if let Some(patch) = self.node_version_patch {
+            e.u64(4)?;
+            e.u16(patch)?;
+        }
+        if let Some(node_type) = &self.node_type {
+            e.u64(5)?;
+            e.str(node_type)?;
+        }
+        if let Some(git_revision) = &self.git_revision {
+            e.u64(6)?;
+            e.str(git_revision)?;
+        }
+        for (k, v) in &self.experimental {
+            e.str(k)?;
+            cbor::Encode::encode(v, e, ctx)?;
+        }
+        Ok(())
     }
 }
 
@@ -187,27 +202,19 @@ impl<C> cbor::Encode<C> for OpenPayload {
         e: &mut cbor::Encoder<W>,
         ctx: &mut C,
     ) -> Result<(), cbor::encode::Error<W::Error>> {
-        let mut n = 0u64;
-        if self.node_name.is_some() {
-            n += 1;
+        // Bound the encoded map (CDDL codec rule: maxOpenPayloadBytes).
+        let mut buf = Vec::new();
+        {
+            let mut nested = cbor::Encoder::new(&mut buf);
+            self.encode_map(&mut nested, ctx).map_err(|err| cbor::encode::Error::message(err.to_string()))?;
         }
-        if self.node_version_major.is_some() {
-            n += 1;
+        if buf.len() > MAX_OPEN_PAYLOAD_BYTES {
+            return Err(cbor::encode::Error::message(format!(
+                "openPayload encoding {} exceeds max {MAX_OPEN_PAYLOAD_BYTES}",
+                buf.len()
+            )));
         }
-        n += self.experimental.len() as u64;
-        e.map(n)?;
-        if let Some(name) = &self.node_name {
-            e.u64(1)?;
-            e.str(name)?;
-        }
-        if let Some(major) = self.node_version_major {
-            e.u64(2)?;
-            e.u16(major)?;
-        }
-        for (k, v) in &self.experimental {
-            e.str(k)?;
-            v.encode(e, ctx)?;
-        }
+        e.writer_mut().write_all(&buf).map_err(cbor::encode::Error::write)?;
         Ok(())
     }
 }
@@ -218,6 +225,10 @@ impl<'b, C> cbor::Decode<'b, C> for OpenPayload {
         let mut payload = OpenPayload::default();
         let mut seen_name = false;
         let mut seen_major = false;
+        let mut seen_minor = false;
+        let mut seen_patch = false;
+        let mut seen_type = false;
+        let mut seen_git = false;
         for _ in 0..len {
             match d.datatype()? {
                 cbor::data::Type::U8
@@ -246,6 +257,38 @@ impl<'b, C> cbor::Decode<'b, C> for OpenPayload {
                             seen_major = true;
                             payload.node_version_major = Some(d.u16()?);
                         }
+                        3 => {
+                            if seen_minor {
+                                return Err(cbor::decode::Error::message(
+                                    "duplicate openPayload key 3 (node_version_minor)",
+                                ));
+                            }
+                            seen_minor = true;
+                            payload.node_version_minor = Some(d.u16()?);
+                        }
+                        4 => {
+                            if seen_patch {
+                                return Err(cbor::decode::Error::message(
+                                    "duplicate openPayload key 4 (node_version_patch)",
+                                ));
+                            }
+                            seen_patch = true;
+                            payload.node_version_patch = Some(d.u16()?);
+                        }
+                        5 => {
+                            if seen_type {
+                                return Err(cbor::decode::Error::message("duplicate openPayload key 5 (node_type)"));
+                            }
+                            seen_type = true;
+                            payload.node_type = Some(d.str()?.to_string());
+                        }
+                        6 => {
+                            if seen_git {
+                                return Err(cbor::decode::Error::message("duplicate openPayload key 6 (git_revision)"));
+                            }
+                            seen_git = true;
+                            payload.git_revision = Some(d.str()?.to_string());
+                        }
                         _ => {
                             // Unknown future integer keys: ignore value.
                             d.skip()?;
@@ -265,7 +308,78 @@ impl<'b, C> cbor::Decode<'b, C> for OpenPayload {
                 }
             }
         }
+        // Reject oversize maps (same bound as encode).
+        let mut buf = Vec::new();
+        {
+            let mut nested = cbor::Encoder::new(&mut buf);
+            payload
+                .encode_map(&mut nested, ctx)
+                .map_err(|e| cbor::decode::Error::message(e.to_string()))?;
+        }
+        if buf.len() > MAX_OPEN_PAYLOAD_BYTES {
+            return Err(cbor::decode::Error::message(format!(
+                "openPayload encoding {} exceeds max {MAX_OPEN_PAYLOAD_BYTES}",
+                buf.len()
+            )));
+        }
         Ok(payload)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub enum Publication {
+    Open { version: u64, snapshot_slot: u64, payload: OpenPayload },
+    Encrypted {
+        version: u64,
+        snapshot_slot: u64,
+        observer_public_key: [u8; OBSERVER_PUBLIC_KEY_LEN],
+        ciphertext: Vec<u8>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub enum Message {
+    GetPublications,
+    Publications(Vec<Publication>),
+    /// Pre-encoded `MsgPublications` CBOR. Encode writes these bytes verbatim so the
+    /// observe hot path never re-serializes. Not produced by Decode (wire peers send
+    /// the logical [`Self::Publications`] form).
+    CachedPublications(NonEmptyBytes),
+}
+
+impl Message {
+    pub fn message_type(&self) -> &'static str {
+        match self {
+            Message::GetPublications => "GetPublications",
+            Message::Publications(_) | Message::CachedPublications(_) => "Publications",
+        }
+    }
+
+    /// Stub cached response: one open publication for Amaru (pre-encoded).
+    pub fn stub_cache(snapshot_slot: u64, major: u16) -> Self {
+        Self::cache_publications(vec![Publication::Open {
+            version: PUBLICATION_VERSION,
+            snapshot_slot,
+            payload: OpenPayload::stub_amaru(major),
+        }])
+    }
+
+    /// Build a wire reply that Encode serves as already-serialized CBOR bytes.
+    pub fn cache_publications(pubs: Vec<Publication>) -> Self {
+        let logical = Message::Publications(pubs);
+        Message::CachedPublications(NonEmptyBytes::encode(&logical))
+    }
+
+    /// Decode a cached bag back to the logical publications list (for tests / tooling).
+    pub fn logical_publications(&self) -> Option<Vec<Publication>> {
+        match self {
+            Message::Publications(pubs) => Some(pubs.clone()),
+            Message::CachedPublications(bytes) => match cbor::decode::<Message>(bytes.as_ref()) {
+                Ok(Message::Publications(pubs)) => Some(pubs),
+                _ => None,
+            },
+            Message::GetPublications => None,
+        }
     }
 }
 
@@ -417,9 +531,21 @@ mod tests {
         fn any_open_payload()(
             node_name in proptest::option::of("[a-zA-Z0-9._-]{1,32}"),
             node_version_major in proptest::option::of(any::<u16>()),
+            node_version_minor in proptest::option::of(any::<u16>()),
+            node_version_patch in proptest::option::of(any::<u16>()),
+            node_type in proptest::option::of("[a-zA-Z0-9._-]{1,32}"),
+            git_revision in proptest::option::of("[a-f0-9]{7,40}"),
             experimental in btree_map("[a-z]+\\.[a-z0-9_]{1,16}", any_experimental_value(), 0..3),
         ) -> OpenPayload {
-            OpenPayload { node_name, node_version_major, experimental }
+            OpenPayload {
+                node_name,
+                node_version_major,
+                node_version_minor,
+                node_version_patch,
+                node_type,
+                git_revision,
+                experimental,
+            }
         }
     }
 
@@ -485,8 +611,10 @@ mod tests {
             "msg_publications_one_open",
             "msg_publications_multi_open",
             "msg_publications_one_open_with_experimental",
+            "msg_publications_one_open_standard_fields",
+            "msg_publications_one_open_amaru_catalogue",
             "bnd_unknown_future_integer_key",
-            "bnd_max_publications_32",
+            "bnd_max_publications_6",
         ];
         for name in cases {
             let bytes = load_vector(name);
@@ -507,7 +635,7 @@ mod tests {
             "neg_wrong_type_node_name",
             "neg_wrong_type_version_major",
             "neg_duplicate_standard_key",
-            "neg_publications_over_max_33",
+            "neg_publications_over_max_7",
             "neg_invalid_publication_version",
         ];
         for name in cases {

@@ -54,6 +54,9 @@ pub const SNAPSHOT_SLOT_PERIOD: u64 = 600;
 /// Hardcoded standard openPayload node_name (key 1). Not configurable.
 const NODE_NAME: &str = "amaru";
 
+/// Hardcoded standard openPayload node_type (key 5). Not configurable yet.
+const NODE_TYPE: &str = "full";
+
 /// How often the refresher re-reads the chain tip while waiting for the next window.
 const TIP_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -67,14 +70,16 @@ pub enum FieldId {
     NodeName,
     /// Standard openPayload key 2 (package major).
     NodeVersionMajor,
+    /// Standard openPayload key 3 (package minor).
+    NodeVersionMinor,
+    /// Standard openPayload key 4 (package patch).
+    NodeVersionPatch,
+    /// Standard openPayload key 5 (`"full"` until roles are differentiated).
+    NodeType,
+    /// Standard openPayload key 6 (short SHA from `amaru --version`).
+    GitRevision,
     /// Experimental `amaru.version` (semver string, e.g. `10.11.0`).
     Version,
-    /// Experimental `amaru.version_minor` (uint).
-    VersionMinor,
-    /// Experimental `amaru.version_patch` (uint).
-    VersionPatch,
-    /// Experimental `amaru.git_revision` — short SHA from `amaru --version` parentheses.
-    GitRevision,
     /// Experimental `amaru.cpu_cores`.
     CpuCores,
     /// Experimental `amaru.process_rss_bytes`.
@@ -94,13 +99,14 @@ pub enum FieldId {
 }
 
 impl FieldId {
-    const ALL: [FieldId; 14] = [
+    const ALL: [FieldId; 15] = [
         Self::NodeName,
         Self::NodeVersionMajor,
-        Self::Version,
-        Self::VersionMinor,
-        Self::VersionPatch,
+        Self::NodeVersionMinor,
+        Self::NodeVersionPatch,
+        Self::NodeType,
         Self::GitRevision,
+        Self::Version,
         Self::CpuCores,
         Self::ProcessRssBytes,
         Self::PeersInbound,
@@ -116,10 +122,11 @@ impl FieldId {
         match self {
             Self::NodeName => "node_name",
             Self::NodeVersionMajor => "node_version_major",
+            Self::NodeVersionMinor => "node_version_minor",
+            Self::NodeVersionPatch => "node_version_patch",
+            Self::NodeType => "node_type",
+            Self::GitRevision => "git_revision",
             Self::Version => "amaru.version",
-            Self::VersionMinor => "amaru.version_minor",
-            Self::VersionPatch => "amaru.version_patch",
-            Self::GitRevision => "amaru.git_revision",
             Self::CpuCores => "amaru.cpu_cores",
             Self::ProcessRssBytes => "amaru.process_rss_bytes",
             Self::PeersInbound => "amaru.peers_inbound",
@@ -139,10 +146,11 @@ impl FromStr for FieldId {
         Ok(match s {
             "node_name" => Self::NodeName,
             "node_version_major" => Self::NodeVersionMajor,
+            "node_version_minor" => Self::NodeVersionMinor,
+            "node_version_patch" => Self::NodeVersionPatch,
+            "node_type" => Self::NodeType,
+            "git_revision" => Self::GitRevision,
             "amaru.version" => Self::Version,
-            "amaru.version_minor" => Self::VersionMinor,
-            "amaru.version_patch" => Self::VersionPatch,
-            "amaru.git_revision" => Self::GitRevision,
             "amaru.cpu_cores" => Self::CpuCores,
             "amaru.process_rss_bytes" => Self::ProcessRssBytes,
             "amaru.peers_inbound" => Self::PeersInbound,
@@ -478,7 +486,7 @@ impl LiveSamples {
 }
 
 fn build_payload(fields: &[FieldId], identity: &NodeIdentity, live: &LiveSamples) -> OpenPayload {
-    let mut payload = OpenPayload { node_name: None, node_version_major: None, experimental: BTreeMap::new() };
+    let mut payload = OpenPayload::default();
 
     for field in fields {
         match field {
@@ -488,26 +496,22 @@ fn build_payload(fields: &[FieldId], identity: &NodeIdentity, live: &LiveSamples
             FieldId::NodeVersionMajor => {
                 payload.node_version_major = Some(identity.major);
             }
+            FieldId::NodeVersionMinor => {
+                payload.node_version_minor = Some(identity.minor);
+            }
+            FieldId::NodeVersionPatch => {
+                payload.node_version_patch = Some(identity.patch);
+            }
+            FieldId::NodeType => {
+                payload.node_type = Some(NODE_TYPE.to_string());
+            }
+            FieldId::GitRevision => {
+                payload.git_revision = Some(identity.git_revision.to_string());
+            }
             FieldId::Version => {
                 payload
                     .experimental
                     .insert("amaru.version".into(), ExperimentalValue::Text(identity.version.to_string()));
-            }
-            FieldId::VersionMinor => {
-                payload
-                    .experimental
-                    .insert("amaru.version_minor".into(), ExperimentalValue::Uint(u64::from(identity.minor)));
-            }
-            FieldId::VersionPatch => {
-                payload
-                    .experimental
-                    .insert("amaru.version_patch".into(), ExperimentalValue::Uint(u64::from(identity.patch)));
-            }
-            FieldId::GitRevision => {
-                payload.experimental.insert(
-                    "amaru.git_revision".into(),
-                    ExperimentalValue::Text(identity.git_revision.to_string()),
-                );
             }
             FieldId::CpuCores => {
                 payload
@@ -617,9 +621,14 @@ mod tests {
         assert_eq!(*snapshot_slot, 1200);
         assert_eq!(payload.node_name.as_deref(), Some("amaru"));
         assert_eq!(payload.node_version_major, Some(identity().major));
+        assert_eq!(payload.node_version_minor, Some(identity().minor));
+        assert_eq!(payload.node_version_patch, Some(identity().patch));
+        assert_eq!(payload.node_type.as_deref(), Some("full"));
+        assert_eq!(payload.git_revision.as_deref(), Some(identity().git_revision));
         assert!(payload.experimental.contains_key("amaru.version"));
-        assert!(payload.experimental.contains_key("amaru.git_revision"));
         assert!(payload.experimental.contains_key("amaru.cpu_cores"));
+        assert!(!payload.experimental.contains_key("amaru.git_revision"));
+        assert!(!payload.experimental.contains_key("amaru.version_minor"));
     }
 
     #[test]
@@ -753,7 +762,7 @@ mod tests {
     fn git_revision_matches_build_short_sha() {
         let toml = r#"
             [[publication]]
-            items = ["amaru.git_revision"]
+            items = ["git_revision"]
         "#;
         let file: PublicationsFile = toml::from_str(toml).unwrap();
         let id = identity();
@@ -763,9 +772,7 @@ mod tests {
         let Publication::Open { payload, .. } = &pubs[0] else {
             panic!("expected open");
         };
-        assert_eq!(
-            payload.experimental.get("amaru.git_revision"),
-            Some(&ExperimentalValue::Text(id.git_revision.to_string()))
-        );
+        assert_eq!(payload.git_revision.as_deref(), Some(id.git_revision));
+        assert!(payload.experimental.is_empty());
     }
 }

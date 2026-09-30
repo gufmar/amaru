@@ -14,7 +14,7 @@
 
 use std::{
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use amaru_kernel::{NetworkName, Peer, Point};
@@ -24,6 +24,7 @@ use amaru_protocols::{
     chainsync::{self, ChainSyncInitiatorMsg, InitiatorMessage as CsLocal, InitiatorResult as CsResult},
     deserializers,
     handshake::{self, HandshakeResult, RefuseReason},
+    keepalive::{InitiatorMessage as KaLocal, InitiatorResult as KaResult, register_keepalive_oneshot},
     mux::{self, MuxMessage},
     observability::{
         self, InitiatorMessage as ObsLocal, InitiatorResult as ObsResult, Publication, register_observability_initiator,
@@ -46,23 +47,150 @@ pub struct SessionRequest {
     pub connect_timeout: Duration,
     pub handshake_timeout: Duration,
     pub protocol_timeout: Duration,
-    pub want_handshake: bool,
     pub want_peershare: bool,
     pub want_tip: bool,
     pub want_observe: bool,
+    /// Keep-alive pings after Accept (`count`, `interval`). `None` skips ping.
+    pub want_ping: Option<(u32, Duration)>,
+    pub want_timetrack: bool,
+    /// Continue an existing timeline (e.g. after a prior query handshake). `(started, last)`.
+    pub timetrack_continue: Option<(Instant, Instant)>,
+    /// Highest N2N version to propose (V11..=this, clipped to [`VersionNumber::SUPPORTED`]).
+    pub max_n2n_version: VersionNumber,
     pub peer_share_amount: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+/// One probe timeline step (`--timetrack`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct TimeTrackStep {
+    /// Stable step id, e.g. `tcp_connect_ok`, `handshake_ok`, `observe_ok`.
+    pub step: String,
+    /// Wall-clock instant (UTC, millisecond precision).
+    pub at: String,
+    /// Milliseconds since the previous step (0 for the first).
+    pub delta_ms: u64,
+    /// Milliseconds since timeline start.
+    pub elapsed_ms: u64,
+    /// Cumulative mux/application bytes sent on this TCP connection.
+    pub bytes_sent: u64,
+    /// Cumulative mux/application bytes received on this TCP connection.
+    pub bytes_recv: u64,
+}
+
+#[derive(Clone)]
+struct TimingCtx {
+    started: Instant,
+    last: Instant,
+    connections: Arc<TokioConnections>,
+    conn_id: amaru_ouroboros::ConnectionId,
+}
+
+impl std::fmt::Debug for TimingCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TimingCtx")
+            .field("started", &self.started)
+            .field("last", &self.last)
+            .field("conn_id", &self.conn_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for TimingCtx {
+    fn eq(&self, _other: &Self) -> bool {
+        // Stage equality ignores live clocks / connection handles.
+        true
+    }
+}
+
+impl TimingCtx {
+    fn mark(&mut self, step: &str) -> TimeTrackStep {
+        let now = Instant::now();
+        let delta_ms = now.duration_since(self.last).as_millis() as u64;
+        let elapsed_ms = now.duration_since(self.started).as_millis() as u64;
+        self.last = now;
+        let (bytes_sent, bytes_recv) = self.connections.byte_counts(self.conn_id).unwrap_or((0, 0));
+        TimeTrackStep {
+            step: step.to_string(),
+            at: format_wall_clock(SystemTime::now()),
+            delta_ms,
+            elapsed_ms,
+            bytes_sent,
+            bytes_recv,
+        }
+    }
+}
+
+fn format_wall_clock(t: SystemTime) -> String {
+    let Ok(dur) = t.duration_since(UNIX_EPOCH) else {
+        return "1970-01-01T00:00:00.000Z".to_string();
+    };
+    let secs = dur.as_secs();
+    let millis = dur.subsec_millis();
+    let days = secs / 86400;
+    let day_secs = secs % 86400;
+    let hours = day_secs / 3600;
+    let minutes = (day_secs % 3600) / 60;
+    let seconds = day_secs % 60;
+    let (year, month, day) = civil_from_days(days as i64);
+    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}.{millis:03}Z")
+}
+
+/// Days since Unix epoch → proleptic Gregorian Y-M-D (Howard Hinnant algorithm).
+fn civil_from_days(days: i64) -> (i32, u32, u32) {
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as i32, m as u32, d as u32)
+}
+
+/// Record a timeline step that is not tied to an open mux connection (e.g. ping).
+pub fn mark_standalone_step(
+    started: Instant,
+    last: &mut Instant,
+    step: &str,
+    bytes_sent: u64,
+    bytes_recv: u64,
+) -> TimeTrackStep {
+    let now = Instant::now();
+    let delta_ms = now.duration_since(*last).as_millis() as u64;
+    let elapsed_ms = now.duration_since(started).as_millis() as u64;
+    *last = now;
+    TimeTrackStep {
+        step: step.to_string(),
+        at: format_wall_clock(SystemTime::now()),
+        delta_ms,
+        elapsed_ms,
+        bytes_sent,
+        bytes_recv,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Default)]
 pub struct HandshakeInfo {
-    pub version: u64,
-    pub network_magic: u64,
-    pub initiator_only: bool,
-    pub peer_sharing: bool,
-    /// Negotiated VersionData `query` flag. When true, handshake is a capability probe
-    /// (`MsgQueryReply`) and does not keep a session — Amaru probe always offers `false`.
-    pub query: bool,
-    pub peras_support: bool,
+    /// All N2N versions the remote listed in `MsgQueryReply` (from `--handshake` query).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub offered_versions: Vec<u64>,
+    /// Negotiated version from Accept (session / keep-alive path).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_magic: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initiator_only: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_sharing: Option<bool>,
+    /// Negotiated VersionData `query` flag. Session handshakes always negotiate `false`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peras_support: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -108,6 +236,9 @@ pub struct ProbeReport {
     pub publications: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub peer_checks: Vec<PeerCheck>,
+    /// Per-step wall clock / deltas / byte counters when `--timetrack` is set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timetrack: Vec<TimeTrackStep>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
 }
@@ -128,6 +259,10 @@ pub struct SessionPartial {
     pub peers: Option<Vec<String>>,
     pub tip: Option<TipInfo>,
     pub publications: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ping_rtts_ms: Vec<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timetrack: Vec<TimeTrackStep>,
     pub errors: Vec<String>,
 }
 
@@ -140,13 +275,95 @@ pub async fn tcp_ping(peer: Peer, timeout: Duration) -> anyhow::Result<Duration>
     Ok(rtt)
 }
 
+fn offered_versions_from_table(table: &VersionTable<amaru_protocols::protocol_messages::version_data::VersionData>) -> Vec<u64> {
+    let mut versions: Vec<u64> = table
+        .values
+        .keys()
+        .chain(table.unknown.keys())
+        .map(|v| v.as_u64())
+        .collect();
+    versions.sort_unstable();
+    versions.dedup();
+    versions
+}
+
+/// Handshake **query** (`query = true`): list every N2N version the remote speaks, then hang up.
+pub async fn run_version_query(
+    peer: Peer,
+    network: NetworkName,
+    connect_timeout: Duration,
+    handshake_timeout: Duration,
+    max_n2n_version: VersionNumber,
+    want_timetrack: bool,
+    timetrack_continue: Option<(Instant, Instant)>,
+) -> anyhow::Result<(Vec<u64>, Vec<TimeTrackStep>)> {
+    let req = SessionRequest {
+        peer,
+        network,
+        connect_timeout,
+        handshake_timeout,
+        protocol_timeout: handshake_timeout,
+        want_peershare: false,
+        want_tip: false,
+        want_observe: false,
+        want_ping: None,
+        want_timetrack,
+        timetrack_continue,
+        max_n2n_version,
+        peer_share_amount: 10,
+    };
+    let partial = run_session_inner(req, HandshakeMode::Query).await?;
+    let offered = partial
+        .handshake
+        .as_ref()
+        .map(|h| h.offered_versions.clone())
+        .unwrap_or_default();
+    if offered.is_empty() && !partial.errors.is_empty() {
+        bail!(partial.errors.join("; "));
+    }
+    if offered.is_empty() {
+        bail!("handshake query returned no versions");
+    }
+    Ok((offered, partial.timetrack))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum HandshakeMode {
+    /// Propose with `query = true`; expect `MsgQueryReply` and stop.
+    Query,
+    /// Propose session versions; expect `MsgAcceptVersion` then run requested mini-protocols.
+    Accept,
+}
+
 pub async fn run_session(req: SessionRequest) -> anyhow::Result<SessionPartial> {
+    run_session_inner(req, HandshakeMode::Accept).await
+}
+
+async fn run_session_inner(req: SessionRequest, handshake_mode: HandshakeMode) -> anyhow::Result<SessionPartial> {
     let _guards = deserializers::register_deserializers();
     let connections = Arc::new(TokioConnections::new(65535));
-    let conn_id = connections
-        .connect(req.peer, req.connect_timeout)
-        .await
-        .context("TCP connect for session")?;
+
+    let (conn_id, pre_steps, timing_for_driver) = if req.want_timetrack {
+        let (started, mut last) = req.timetrack_continue.unwrap_or_else(|| {
+            let now = Instant::now();
+            (now, now)
+        });
+        let mut steps = vec![mark_standalone_step(started, &mut last, "tcp_connect_start", 0, 0)];
+        let conn_id = connections
+            .connect(req.peer, req.connect_timeout)
+            .await
+            .context("TCP connect for session")?;
+        let (sent, recv) = connections.byte_counts(conn_id).unwrap_or((0, 0));
+        steps.push(mark_standalone_step(started, &mut last, "tcp_connect_ok", sent, recv));
+        let ctx = TimingCtx { started, last, connections: connections.clone(), conn_id };
+        (conn_id, steps, Some(ctx))
+    } else {
+        let conn_id = connections
+            .connect(req.peer, req.connect_timeout)
+            .await
+            .context("TCP connect for session")?;
+        (conn_id, Vec::new(), None)
+    };
 
     let mut network = TokioBuilder::default();
     network.resources().put::<ConnectionsResource>(connections.clone());
@@ -162,16 +379,22 @@ pub async fn run_session(req: SessionRequest) -> anyhow::Result<SessionPartial> 
             peer: req.peer,
             conn_id,
             magic: req.network.to_network_magic(),
+            handshake_mode,
             want_peershare: req.want_peershare,
             want_tip: req.want_tip,
             want_observe: req.want_observe,
+            want_ping: req.want_ping,
             peer_share_amount: req.peer_share_amount,
+            max_n2n_version: req.max_n2n_version,
             protocol_timeout: req.protocol_timeout,
             handshake_timeout: req.handshake_timeout,
             report_to: report_out,
             muxer: None,
+            keepalive: None,
             phase: Phase::Start,
-            partial: SessionPartial::default(),
+            pings_remaining: 0,
+            partial: SessionPartial { timetrack: pre_steps, ..SessionPartial::default() },
+            timing: timing_for_driver,
         },
     );
 
@@ -181,7 +404,14 @@ pub async fn run_session(req: SessionRequest) -> anyhow::Result<SessionPartial> 
 
     let handle = Handle::current();
     let running = network.run(handle);
+    let ping_budget = req
+        .want_ping
+        .map(|(count, interval)| {
+            req.protocol_timeout * count + interval * count.saturating_sub(1)
+        })
+        .unwrap_or(Duration::ZERO);
     let overall = req.handshake_timeout
+        + ping_budget
         + req.protocol_timeout
             * (u32::from(req.want_tip) + u32::from(req.want_peershare) + u32::from(req.want_observe)).max(1);
 
@@ -199,7 +429,6 @@ pub async fn run_session(req: SessionRequest) -> anyhow::Result<SessionPartial> 
 
     running.abort();
     let _ = connections.close(conn_id).await;
-    let _ = req.want_handshake;
     Ok(partial)
 }
 
@@ -207,6 +436,7 @@ pub async fn run_session(req: SessionRequest) -> anyhow::Result<SessionPartial> 
 enum Phase {
     Start,
     Handshaking,
+    Ping,
     Tip,
     PeerShare,
     Observe,
@@ -218,22 +448,39 @@ struct Driver {
     peer: Peer,
     conn_id: amaru_ouroboros::ConnectionId,
     magic: amaru_kernel::NetworkMagic,
+    handshake_mode: HandshakeMode,
     want_peershare: bool,
     want_tip: bool,
     want_observe: bool,
+    want_ping: Option<(u32, Duration)>,
     peer_share_amount: u8,
+    max_n2n_version: VersionNumber,
     protocol_timeout: Duration,
     handshake_timeout: Duration,
     report_to: StageRef<SessionPartial>,
     muxer: Option<StageRef<MuxMessage>>,
+    keepalive: Option<StageRef<KaLocal>>,
     phase: Phase,
+    /// Remaining keep-alive sends after the in-flight one completes.
+    pings_remaining: u32,
     partial: SessionPartial,
+    #[serde(skip)]
+    timing: Option<TimingCtx>,
+}
+
+fn mark(state: &mut Driver, step: &str) {
+    if let Some(timing) = state.timing.as_mut() {
+        let entry = timing.mark(step);
+        state.partial.timetrack.push(entry);
+    }
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 enum DriverMsg {
     Start,
     Handshake(HandshakeResult),
+    Ping(KaResult),
+    PingAgain,
     Tip(ChainSyncInitiatorMsg),
     Share(ShareResult),
     Observe(ObsResult),
@@ -252,6 +499,7 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
 
     match msg {
         DriverMsg::Start => {
+            mark(&mut state, "handshake_start");
             let muxer = eff.stage("mux", mux::stage).await;
             let muxer = eff.supervise(muxer, DriverMsg::MuxDied);
             let muxer = eff
@@ -261,18 +509,18 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
                 )
                 .await;
 
+            let versions = match state.handshake_mode {
+                HandshakeMode::Query => VersionTable::query_through(state.max_n2n_version, state.magic),
+                HandshakeMode::Accept => {
+                    VersionTable::v11_through(state.max_n2n_version, state.magic, true, true)
+                }
+            };
+
             let hs_reply = eff.me_ref().contramap(DriverMsg::Handshake);
             let hs = eff.stage("handshake", handshake::initiator()).await;
             let hs = eff.supervise(hs, DriverMsg::ChildDied);
             let hs = eff
-                .wire_up(
-                    hs,
-                    handshake::HandshakeInitiator::new(
-                        muxer.clone(),
-                        hs_reply,
-                        VersionTable::v11_through(VersionNumber::V16, state.magic, true, true),
-                    ),
-                )
+                .wire_up(hs, handshake::HandshakeInitiator::new(muxer.clone(), hs_reply, versions))
                 .await;
 
             eff.send(
@@ -295,59 +543,115 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
             eff.clear_timeout_at(1).await;
             match result {
                 HandshakeResult::Accepted(version, data) => {
-                    state.partial.handshake = Some(HandshakeInfo {
-                        version: version.as_u64(),
-                        network_magic: data.network_magic().as_u64(),
-                        initiator_only: data.initiator_only_diffusion_mode(),
-                        peer_sharing: bool::from(data.peer_sharing()),
-                        query: data.query(),
-                        peras_support: data.peras_support(),
-                    });
+                    if state.handshake_mode == HandshakeMode::Query {
+                        mark(&mut state, "handshake_unexpected_accept");
+                        state
+                            .partial
+                            .errors
+                            .push("handshake query expected MsgQueryReply, got Accept".to_string());
+                        return finish(state, &eff).await;
+                    }
+                    mark(&mut state, "handshake_ok");
+                    let mut hs = state.partial.handshake.take().unwrap_or_default();
+                    hs.version = Some(version.as_u64());
+                    hs.network_magic = Some(data.network_magic().as_u64());
+                    hs.initiator_only = Some(data.initiator_only_diffusion_mode());
+                    hs.peer_sharing = Some(bool::from(data.peer_sharing()));
+                    hs.query = Some(data.query());
+                    hs.peras_support = Some(data.peras_support());
+                    state.partial.handshake = Some(hs);
                     return advance_after_handshake(state, version, data.peer_sharing(), &eff).await;
                 }
                 HandshakeResult::Refused(reason) => {
+                    mark(&mut state, "handshake_refused");
                     state.partial.errors.push(format!("handshake refused: {}", format_refuse(&reason)));
                     return finish(state, &eff).await;
                 }
                 HandshakeResult::Query(table) => {
-                    state.partial.errors.push(format!("handshake query (unexpected): {table}"));
+                    mark(&mut state, "handshake_query_ok");
+                    let offered = offered_versions_from_table(&table);
+                    let mut hs = state.partial.handshake.take().unwrap_or_default();
+                    hs.offered_versions = offered;
+                    // Query replies include VersionData; surface peer_sharing of the highest known version.
+                    if let Some((_, data)) = table.values.iter().next_back() {
+                        hs.network_magic = Some(data.network_magic().as_u64());
+                        hs.initiator_only = Some(data.initiator_only_diffusion_mode());
+                        hs.peer_sharing = Some(bool::from(data.peer_sharing()));
+                        hs.query = Some(true);
+                        hs.peras_support = Some(data.peras_support());
+                    }
+                    state.partial.handshake = Some(hs);
                     return finish(state, &eff).await;
                 }
             }
         }
-        DriverMsg::Tip(msg) => {
-            match msg.msg {
-                CsResult::Initialize => state,
-                CsResult::IntersectFound(_, tip) | CsResult::IntersectNotFound(tip) => {
-                    state.partial.tip = Some(TipInfo::from_point(tip));
-                    eff.clear_timeout_at(2).await;
-                    eff.send(&msg.handler, CsLocal::Done).await;
-                    advance_after_tip(state, &eff).await
+        DriverMsg::Ping(result) => {
+            eff.clear_timeout_at(5).await;
+            match result.round_trip {
+                Some(rtt) => {
+                    state.partial.ping_rtts_ms.push(rtt.as_millis() as u64);
+                    mark(&mut state, "ping_ok");
                 }
-                CsResult::RollForward(_, tip) | CsResult::RollBackward(_, tip) => {
-                    // Prefer intersect tip; keep last tip if somehow still streaming.
-                    if state.partial.tip.is_none() {
-                        state.partial.tip = Some(TipInfo::from_point(tip));
-                    }
-                    state
-                }
-                CsResult::Terminated => {
-                    if state.partial.tip.is_none() {
-                        state.partial.errors.push("chainsync terminated before tip".to_string());
-                    }
-                    eff.clear_timeout_at(2).await;
-                    advance_after_tip(state, &eff).await
+                None => {
+                    // Bootstrap / unmatched cookie — ignore.
+                    return state;
                 }
             }
+            if state.pings_remaining > 0 {
+                let interval = state.want_ping.map(|(_, i)| i).unwrap_or(Duration::from_secs(1));
+                state.pings_remaining -= 1;
+                eff.schedule_after(DriverMsg::PingAgain, interval).await;
+                return state;
+            }
+            if let Some(ka) = state.keepalive.take() {
+                eff.send(&ka, KaLocal::Close).await;
+            }
+            advance_after_ping(state, &eff).await
         }
+        DriverMsg::PingAgain => {
+            if let Some(ka) = state.keepalive.clone() {
+                mark(&mut state, "ping_start");
+                eff.send(&ka, KaLocal::SendKeepAlive).await;
+                eff.set_timeout_at(5, state.protocol_timeout, DriverMsg::StepTimeout).await;
+            }
+            state
+        }
+        DriverMsg::Tip(msg) => match msg.msg {
+            CsResult::Initialize => state,
+            CsResult::IntersectFound(_, tip) | CsResult::IntersectNotFound(tip) => {
+                state.partial.tip = Some(TipInfo::from_point(tip));
+                mark(&mut state, "tip_ok");
+                eff.clear_timeout_at(2).await;
+                eff.send(&msg.handler, CsLocal::Done).await;
+                advance_after_tip(state, &eff).await
+            }
+            CsResult::RollForward(_, tip) | CsResult::RollBackward(_, tip) => {
+                if state.partial.tip.is_none() {
+                    state.partial.tip = Some(TipInfo::from_point(tip));
+                }
+                state
+            }
+            CsResult::Terminated => {
+                if state.partial.tip.is_none() {
+                    state.partial.errors.push("chainsync terminated before tip".to_string());
+                    mark(&mut state, "tip_failed");
+                } else {
+                    mark(&mut state, "tip_ok");
+                }
+                eff.clear_timeout_at(2).await;
+                advance_after_tip(state, &eff).await
+            }
+        },
         DriverMsg::Share(share) => {
             eff.clear_timeout_at(3).await;
             state.partial.peers = Some(share.peers.iter().map(|a| a.to_string()).collect());
+            mark(&mut state, "peershare_ok");
             advance_after_peershare(state, &eff).await
         }
         DriverMsg::Observe(ObsResult::Publications(message)) => {
             eff.clear_timeout_at(4).await;
             state.partial.publications = Some(publications_json(&message));
+            mark(&mut state, "observe_ok");
             finish(state, &eff).await
         }
         DriverMsg::ChildDied => state,
@@ -357,24 +661,37 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
                     "mux exited during observe (connection closed, or peer has no observability on mux 11; set AMARU_OBSERVABILITY=1 on Amaru)"
                 }
                 Phase::Handshaking => "mux exited during handshake",
+                Phase::Ping => "mux exited during keep-alive ping",
                 Phase::Tip => "mux exited during tip",
                 Phase::PeerShare => "mux exited during peershare",
                 Phase::Start | Phase::Done => "mux exited",
             };
+            let died_step = match state.phase {
+                Phase::Observe => "observe_mux_died",
+                Phase::Handshaking => "handshake_mux_died",
+                Phase::Ping => "ping_mux_died",
+                Phase::Tip => "tip_mux_died",
+                Phase::PeerShare => "peershare_mux_died",
+                Phase::Start | Phase::Done => "mux_died",
+            };
+            mark(&mut state, died_step);
             state.partial.errors.push(hint.to_string());
             finish(state, &eff).await
         }
         DriverMsg::StepTimeout => {
-            let label = match state.phase {
-                Phase::Start => "start",
-                Phase::Handshaking => "handshake",
-                Phase::Tip => "tip",
-                Phase::PeerShare => "peershare",
-                Phase::Observe => {
-                    "observe (no MsgPublications; peer may lack AMARU_OBSERVABILITY / mux 11)"
-                }
-                Phase::Done => "done",
+            let (label, step) = match state.phase {
+                Phase::Start => ("start", "start_timeout"),
+                Phase::Handshaking => ("handshake", "handshake_timeout"),
+                Phase::Ping => ("keep-alive ping", "ping_timeout"),
+                Phase::Tip => ("tip", "tip_timeout"),
+                Phase::PeerShare => ("peershare", "peershare_timeout"),
+                Phase::Observe => (
+                    "observe (no MsgPublications; peer may lack AMARU_OBSERVABILITY / mux 11)",
+                    "observe_timeout",
+                ),
+                Phase::Done => ("done", "done_timeout"),
             };
+            mark(&mut state, step);
             state.partial.errors.push(format!("{label} timed out"));
             finish(state, &eff).await
         }
@@ -392,20 +709,12 @@ async fn advance_after_handshake(
         return finish(state, eff).await;
     };
 
+    if let Some((count, _)) = state.want_ping {
+        return start_ping(state, muxer, count, eff).await;
+    }
+
     if state.want_tip {
-        state.phase = Phase::Tip;
-        let pipeline = eff.me_ref().contramap(DriverMsg::Tip);
-        let _ = chainsync::register_chainsync_initiator(
-            &muxer,
-            state.peer,
-            state.conn_id,
-            pipeline,
-            eff,
-            DriverMsg::ChildDied,
-        )
-        .await;
-        eff.set_timeout_at(2, state.protocol_timeout, DriverMsg::StepTimeout).await;
-        return state;
+        return start_tip(state, muxer, eff).await;
     }
 
     if state.want_peershare {
@@ -419,6 +728,79 @@ async fn advance_after_handshake(
     finish(state, eff).await
 }
 
+async fn start_ping(
+    mut state: Driver,
+    muxer: StageRef<MuxMessage>,
+    count: u32,
+    eff: &Effects<DriverMsg>,
+) -> Driver {
+    mark(&mut state, "ping_start");
+    state.phase = Phase::Ping;
+    state.pings_remaining = count.saturating_sub(1);
+    let report_to = eff.me_ref().contramap(DriverMsg::Ping);
+    let ka = register_keepalive_oneshot(
+        state.peer,
+        state.conn_id,
+        &muxer,
+        report_to,
+        eff,
+        DriverMsg::ChildDied,
+    )
+    .await;
+    state.keepalive = Some(ka.clone());
+    eff.send(&ka, KaLocal::SendKeepAlive).await;
+    eff.set_timeout_at(5, state.protocol_timeout, DriverMsg::StepTimeout).await;
+    state
+}
+
+async fn advance_after_ping(state: Driver, eff: &Effects<DriverMsg>) -> Driver {
+    let Some(muxer) = state.muxer.clone() else {
+        return finish(state, eff).await;
+    };
+    let peer_sharing = state
+        .partial
+        .handshake
+        .as_ref()
+        .and_then(|h| h.peer_sharing)
+        .map(|enabled| if enabled { PeerSharing::Enabled } else { PeerSharing::Disabled })
+        .unwrap_or(PeerSharing::Disabled);
+    let version = state
+        .partial
+        .handshake
+        .as_ref()
+        .and_then(|h| h.version)
+        .map(VersionNumber::new)
+        .unwrap_or(VersionNumber::CURRENT);
+
+    if state.want_tip {
+        return start_tip(state, muxer, eff).await;
+    }
+    if state.want_peershare {
+        return start_peershare(state, muxer, peer_sharing, eff).await;
+    }
+    if state.want_observe {
+        return start_observe(state, muxer, version, eff).await;
+    }
+    finish(state, eff).await
+}
+
+async fn start_tip(mut state: Driver, muxer: StageRef<MuxMessage>, eff: &Effects<DriverMsg>) -> Driver {
+    mark(&mut state, "tip_start");
+    state.phase = Phase::Tip;
+    let pipeline = eff.me_ref().contramap(DriverMsg::Tip);
+    let _ = chainsync::register_chainsync_initiator(
+        &muxer,
+        state.peer,
+        state.conn_id,
+        pipeline,
+        eff,
+        DriverMsg::ChildDied,
+    )
+    .await;
+    eff.set_timeout_at(2, state.protocol_timeout, DriverMsg::StepTimeout).await;
+    state
+}
+
 async fn advance_after_tip(state: Driver, eff: &Effects<DriverMsg>) -> Driver {
     let Some(muxer) = state.muxer.clone() else {
         return finish(state, eff).await;
@@ -427,13 +809,15 @@ async fn advance_after_tip(state: Driver, eff: &Effects<DriverMsg>) -> Driver {
         .partial
         .handshake
         .as_ref()
-        .map(|h| if h.peer_sharing { PeerSharing::Enabled } else { PeerSharing::Disabled })
+        .and_then(|h| h.peer_sharing)
+        .map(|enabled| if enabled { PeerSharing::Enabled } else { PeerSharing::Disabled })
         .unwrap_or(PeerSharing::Disabled);
     let version = state
         .partial
         .handshake
         .as_ref()
-        .map(|h| VersionNumber::new(h.version))
+        .and_then(|h| h.version)
+        .map(VersionNumber::new)
         .unwrap_or(VersionNumber::CURRENT);
 
     if state.want_peershare {
@@ -453,7 +837,8 @@ async fn advance_after_peershare(state: Driver, eff: &Effects<DriverMsg>) -> Dri
         .partial
         .handshake
         .as_ref()
-        .map(|h| VersionNumber::new(h.version))
+        .and_then(|h| h.version)
+        .map(VersionNumber::new)
         .unwrap_or(VersionNumber::CURRENT);
     if state.want_observe {
         return start_observe(state, muxer, version, eff).await;
@@ -468,12 +853,15 @@ async fn start_peershare(
     eff: &Effects<DriverMsg>,
 ) -> Driver {
     if peer_sharing != PeerSharing::Enabled {
-        state.partial.errors.push("peer-sharing not negotiated".to_string());
+        // Soft-skip: do not try the mini-protocol and do not treat as probe failure.
+        mark(&mut state, "peershare_skipped");
+        state.partial.peers = Some(Vec::new());
         let version = state
             .partial
             .handshake
             .as_ref()
-            .map(|h| VersionNumber::new(h.version))
+            .and_then(|h| h.version)
+            .map(VersionNumber::new)
             .unwrap_or(VersionNumber::CURRENT);
         if state.want_observe {
             return start_observe(state, muxer, version, eff).await;
@@ -481,6 +869,7 @@ async fn start_peershare(
         return finish(state, eff).await;
     }
 
+    mark(&mut state, "peershare_start");
     state.phase = Phase::PeerShare;
     let reply_to = eff.me_ref().contramap(DriverMsg::Share);
     let ps = register_peer_sharing_initiator(&muxer, state.peer, state.conn_id, eff, DriverMsg::ChildDied).await;
@@ -509,9 +898,11 @@ async fn start_observe(
             .partial
             .errors
             .push(format!("observability requires N2N V16+ (negotiated {})", version.as_u64()));
+        mark(&mut state, "observe_skipped");
         return finish(state, eff).await;
     }
 
+    mark(&mut state, "observe_start");
     state.phase = Phase::Observe;
     let reply_to = eff.me_ref().contramap(DriverMsg::Observe);
     let obs = register_observability_initiator(
@@ -532,6 +923,7 @@ async fn finish(mut state: Driver, eff: &Effects<DriverMsg>) -> Driver {
     if state.phase == Phase::Done {
         return state;
     }
+    mark(&mut state, "session_done");
     state.phase = Phase::Done;
     // Deliver the report, then stay alive. Terminating the root stage signals graph-wide
     // abort and can kill the output stage before it forwards the report to the CLI.
@@ -570,6 +962,10 @@ fn publication_json(pub_: &Publication) -> serde_json::Value {
             "snapshot_slot": snapshot_slot,
             "node_name": payload.node_name,
             "node_version_major": payload.node_version_major,
+            "node_version_minor": payload.node_version_minor,
+            "node_version_patch": payload.node_version_patch,
+            "node_type": payload.node_type,
+            "git_revision": payload.git_revision,
             "experimental": payload.experimental.iter().map(|(k, v)| {
                 (k.clone(), experimental_json(v))
             }).collect::<serde_json::Map<_, _>>(),
@@ -596,5 +992,21 @@ fn experimental_json(value: &observability::ExperimentalValue) -> serde_json::Va
         observability::ExperimentalValue::Bool(b) => serde_json::json!(b),
         observability::ExperimentalValue::Bytes(b) => serde_json::json!(hex::encode(b)),
         observability::ExperimentalValue::UintArray(xs) => serde_json::json!(xs),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::civil_from_days;
+
+    #[test]
+    fn unix_epoch_day_zero() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+    }
+
+    #[test]
+    fn known_date() {
+        // 2000-01-01 = 10957 days since Unix epoch.
+        assert_eq!(civil_from_days(10957), (2000, 1, 1));
     }
 }
