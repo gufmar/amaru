@@ -681,27 +681,37 @@ fn print_timetrack_section(steps: &[session::TimeTrackStep], color: bool) {
     flush_stdout();
 }
 
+fn format_rtt_ms(ms: f64) -> String {
+    if ms >= 10.0 {
+        format!("{ms:.1}")
+    } else if ms >= 1.0 {
+        format!("{ms:.2}")
+    } else {
+        format!("{ms:.3}")
+    }
+}
+
 fn print_ping_section_buffered(report: &session::ProbeReport, color: bool) {
     let (ok, _, _, _, _, reset) = color_palette(color);
     let samples = &report.ping_rtts_ms;
     println!("  {ok}ping{reset}");
     if samples.len() == 1 {
-        println!("    rtt:              {} ms", samples[0]);
+        println!("    rtt:              {} ms", format_rtt_ms(samples[0]));
         return;
     }
-    let min = samples.iter().copied().min().unwrap_or(0);
-    let max = samples.iter().copied().max().unwrap_or(0);
-    let avg = samples.iter().sum::<u64>() / samples.len() as u64;
+    let min = samples.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = samples.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let avg = samples.iter().sum::<f64>() / samples.len() as f64;
     println!("    count:            {}", samples.len());
     if let Some(interval) = report.ping_interval_ms {
         println!("    interval:         {interval} ms");
     }
     for (i, ms) in samples.iter().enumerate() {
-        println!("    {:<18} {} ms", format!("{}:", i + 1), ms);
+        println!("    {:<18} {} ms", format!("{}:", i + 1), format_rtt_ms(*ms));
     }
-    println!("    min:              {min} ms");
-    println!("    avg:              {avg} ms");
-    println!("    max:              {max} ms");
+    println!("    min:              {} ms", format_rtt_ms(min));
+    println!("    avg:              {} ms", format_rtt_ms(avg));
+    println!("    max:              {} ms", format_rtt_ms(max));
 }
 
 fn print_publications_human(value: &serde_json::Value, indent: &str) {

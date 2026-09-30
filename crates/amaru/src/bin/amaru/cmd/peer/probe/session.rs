@@ -218,8 +218,9 @@ pub struct ProbeReport {
     pub address: String,
     pub network: String,
     /// Present only when ping samples were collected (`--ping` / `--all`).
+    /// Values are milliseconds (fractional; keep-alive RTT can be sub-ms on LAN).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub ping_rtts_ms: Vec<u64>,
+    pub ping_rtts_ms: Vec<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ping_interval_ms: Option<u64>,
     /// Negotiated VersionData; present after a successful handshake.
@@ -260,7 +261,7 @@ pub struct SessionPartial {
     pub tip: Option<TipInfo>,
     pub publications: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub ping_rtts_ms: Vec<u64>,
+    pub ping_rtts_ms: Vec<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub timetrack: Vec<TimeTrackStep>,
     pub errors: Vec<String>,
@@ -587,13 +588,12 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
         }
         DriverMsg::Ping(result) => {
             eff.clear_timeout_at(5).await;
-            match result.round_trip {
-                Some(rtt) => {
-                    state.partial.ping_rtts_ms.push(rtt.as_millis() as u64);
+            match result {
+                KaResult::Response { round_trip: Some(rtt), .. } => {
+                    state.partial.ping_rtts_ms.push(rtt.as_secs_f64() * 1_000.0);
                     mark(&mut state, "ping_ok");
                 }
-                None => {
-                    // Bootstrap / unmatched cookie — ignore.
+                KaResult::Bootstrap | KaResult::Response { round_trip: None, .. } => {
                     return state;
                 }
             }
