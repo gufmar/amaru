@@ -113,6 +113,20 @@ pub struct Args {
     #[arg(long)]
     timetrack: bool,
 
+    /// Extra attempts after a failed handshake-query or session step.
+    ///
+    /// Optional value: `COUNT` (1..=32 retries, 500 ms apart) or `COUNT:INTERVAL_MS`
+    /// (e.g. `2:500` = retry twice, 500 ms between attempts). Bare `--retry` retries once
+    /// after 500 ms. Does not multiply `--ping` samples.
+    #[arg(
+        long,
+        num_args = 0..=1,
+        default_missing_value = "1:500",
+        value_name = "COUNT|COUNT:INTERVAL_MS",
+        env = amaru::env_vars::PROBE_RETRY
+    )]
+    retry: Option<RetrySpec>,
+
     /// Highest N2N version to offer in the handshake (default: highest Amaru can speak).
     ///
     /// Proposes every Amaru-supported version from 11 through this value. Must be a
@@ -130,7 +144,7 @@ pub struct Args {
     json: bool,
 }
 
-/// How many TCP pings to run and the gap between them.
+/// How many keep-alive pings to run and the gap between them.
 #[derive(Debug, Clone, Copy)]
 struct PingSpec {
     count: u32,
@@ -141,28 +155,77 @@ impl FromStr for PingSpec {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        const MAX_COUNT: u32 = 86400;
-
-        let (count_str, interval) = if let Some((count_str, interval_str)) = s.split_once(':') {
-            let interval_ms: u64 = interval_str
-                .parse()
-                .map_err(|_| format!("invalid ping interval '{interval_str}' (expected milliseconds)"))?;
-            if interval_ms == 0 {
-                return Err("ping interval must be >= 1 ms".to_string());
-            }
-            (count_str, Duration::from_millis(interval_ms))
-        } else {
-            (s, Duration::from_secs(1))
-        };
-
-        let count: u32 = count_str
-            .parse()
-            .map_err(|_| format!("invalid ping count '{count_str}' (expected integer 1..={MAX_COUNT})"))?;
-        if !(1..=MAX_COUNT).contains(&count) {
-            return Err(format!("ping count must be between 1 and {MAX_COUNT}"));
-        }
-
+        let (count, interval) = parse_count_interval(s, Duration::from_secs(1), "ping", 1, 86400)?;
         Ok(Self { count, interval })
+    }
+}
+
+/// Extra attempts after the first failure, and the delay between attempts.
+#[derive(Debug, Clone, Copy)]
+struct RetrySpec {
+    /// Number of retries after the initial attempt (total attempts = `count + 1`).
+    count: u32,
+    interval: Duration,
+}
+
+impl FromStr for RetrySpec {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (count, interval) = parse_count_interval(s, Duration::from_millis(500), "retry", 1, 32)?;
+        Ok(Self { count, interval })
+    }
+}
+
+fn parse_count_interval(
+    s: &str,
+    default_interval: Duration,
+    kind: &str,
+    min_count: u32,
+    max_count: u32,
+) -> Result<(u32, Duration), String> {
+    let (count_str, interval) = if let Some((count_str, interval_str)) = s.split_once(':') {
+        let interval_ms: u64 = interval_str
+            .parse()
+            .map_err(|_| format!("invalid {kind} interval '{interval_str}' (expected milliseconds)"))?;
+        if interval_ms == 0 {
+            return Err(format!("{kind} interval must be >= 1 ms"));
+        }
+        (count_str, Duration::from_millis(interval_ms))
+    } else {
+        (s, default_interval)
+    };
+
+    let count: u32 = count_str
+        .parse()
+        .map_err(|_| format!("invalid {kind} count '{count_str}' (expected integer {min_count}..={max_count})"))?;
+    if !(min_count..=max_count).contains(&count) {
+        return Err(format!("{kind} count must be between {min_count} and {max_count}"));
+    }
+
+    Ok((count, interval))
+}
+
+/// Run `op` once, then up to `retry.count` more times after `retry.interval` on failure.
+async fn with_retries<T, E, F, Fut>(retry: Option<RetrySpec>, mut op: F) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+{
+    let (extra, delay) = match retry {
+        Some(spec) => (spec.count, spec.interval),
+        None => (0, Duration::ZERO),
+    };
+    let mut attempt = 0u32;
+    loop {
+        match op().await {
+            Ok(value) => return Ok(value),
+            Err(_err) if attempt < extra => {
+                attempt += 1;
+                tokio::time::sleep(delay).await;
+            }
+            Err(err) => return Err(err),
+        }
     }
 }
 
@@ -259,15 +322,17 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     // --handshake: dedicated query connection listing every remote-offered N2N version.
     if actions.handshake {
-        match session::run_version_query(
-            peer,
-            args.network,
-            connect_timeout,
-            handshake_timeout,
-            max_n2n_version,
-            args.timetrack,
-            track_clock,
-        )
+        match with_retries(args.retry, || {
+            session::run_version_query(
+                peer,
+                args.network,
+                connect_timeout,
+                handshake_timeout,
+                max_n2n_version,
+                args.timetrack,
+                track_clock,
+            )
+        })
         .await
         {
             Ok((offered, steps)) => {
@@ -297,20 +362,22 @@ async fn run(args: Args) -> anyhow::Result<()> {
     }
 
     if actions.needs_session() {
-        match session::run_session(session::SessionRequest {
-            peer,
-            network: args.network,
-            connect_timeout,
-            handshake_timeout,
-            protocol_timeout,
-            want_peershare: actions.peershare,
-            want_tip: actions.tip,
-            want_observe: actions.observe,
-            want_ping: actions.ping.map(|s| (s.count, s.interval)),
-            want_timetrack: args.timetrack,
-            timetrack_continue: track_clock,
-            max_n2n_version,
-            peer_share_amount: 10,
+        match with_retries(args.retry, || {
+            session::run_session(session::SessionRequest {
+                peer,
+                network: args.network,
+                connect_timeout,
+                handshake_timeout,
+                protocol_timeout,
+                want_peershare: actions.peershare,
+                want_tip: actions.tip,
+                want_observe: actions.observe,
+                want_ping: actions.ping.map(|s| (s.count, s.interval)),
+                want_timetrack: args.timetrack,
+                timetrack_continue: track_clock,
+                max_n2n_version,
+                peer_share_amount: 10,
+            })
         })
         .await
         {
@@ -812,4 +879,60 @@ fn resolve_requested_version(raw: u64) -> anyhow::Result<VersionNumber> {
         "unsupported --requested-version {raw}; Amaru speaks N2N versions [{supported}] (default {})",
         VersionNumber::HIGHEST.as_u64()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_spec_parses_count_and_interval() {
+        let spec: RetrySpec = "2:500".parse().unwrap();
+        assert_eq!(spec.count, 2);
+        assert_eq!(spec.interval, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn retry_spec_bare_count_defaults_to_500ms() {
+        let spec: RetrySpec = "3".parse().unwrap();
+        assert_eq!(spec.count, 3);
+        assert_eq!(spec.interval, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn ping_spec_bare_count_defaults_to_1s() {
+        let spec: PingSpec = "5".parse().unwrap();
+        assert_eq!(spec.count, 5);
+        assert_eq!(spec.interval, Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn with_retries_succeeds_on_later_attempt() {
+        let mut tries = 0u32;
+        let result = with_retries(Some(RetrySpec { count: 2, interval: Duration::from_millis(1) }), || {
+            tries += 1;
+            async move {
+                if tries < 3 {
+                    Err("transient")
+                } else {
+                    Ok(42)
+                }
+            }
+        })
+        .await;
+        assert_eq!(result, Ok(42));
+        assert_eq!(tries, 3);
+    }
+
+    #[tokio::test]
+    async fn with_retries_none_is_single_attempt() {
+        let mut tries = 0u32;
+        let result: Result<(), &str> = with_retries(None, || {
+            tries += 1;
+            async { Err("fail") }
+        })
+        .await;
+        assert_eq!(result, Err("fail"));
+        assert_eq!(tries, 1);
+    }
 }

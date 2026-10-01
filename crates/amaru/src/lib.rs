@@ -169,6 +169,9 @@ pub mod env_vars {
     /// --protocol-timeout (peer probe, milliseconds)
     pub const PROBE_PROTOCOL_TIMEOUT: &str = "AMARU_PROBE_PROTOCOL_TIMEOUT";
 
+    /// --retry (peer probe, `COUNT` or `COUNT:INTERVAL_MS`)
+    pub const PROBE_RETRY: &str = "AMARU_PROBE_RETRY";
+
     /// --observability-config (publications TOML for experimental mux 11)
     pub const OBSERVABILITY_CONFIG: &str = "AMARU_OBSERVABILITY_CONFIG";
 
