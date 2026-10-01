@@ -144,6 +144,7 @@ impl Command {
         matches!(
             self,
             Command::Peer(_)
+                | Command::Dev(cmd::dev::DevCommand::Env(_))
                 | Command::Dev(cmd::dev::DevCommand::Traces(cmd::dev::traces::TracesCommand::Dump(_)))
                 | Command::Dev(cmd::dev::DevCommand::Traces(cmd::dev::traces::TracesCommand::Schema(_)))
                 | Command::LegacyDumpTracesSchema(_)

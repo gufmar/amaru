@@ -30,7 +30,7 @@ use amaru_protocols::{
         self, InitiatorMessage as ObsLocal, InitiatorResult as ObsResult, Publication, register_observability_initiator,
     },
     peer_sharing::{PeerSharingMessage, ShareResult, register_peer_sharing_initiator},
-    protocol::{Inputs, PROTO_HANDSHAKE, Role},
+    protocol::{Inputs, PROTO_HANDSHAKE, Role, ingress_limit},
     protocol_messages::{version_data::PeerSharing, version_number::VersionNumber, version_table::VersionTable},
     store_effects::ResourceHeaderStore,
 };
@@ -506,7 +506,7 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
             let muxer = eff
                 .wire_up(
                     muxer,
-                    mux::State::new(state.conn_id, &[(PROTO_HANDSHAKE.erase(), 5760)], Role::Initiator, state.peer),
+                    mux::State::new(state.conn_id, &[(PROTO_HANDSHAKE.erase(), ingress_limit(PROTO_HANDSHAKE))], Role::Initiator, state.peer),
                 )
                 .await;
 
@@ -530,7 +530,7 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
                     protocol: PROTO_HANDSHAKE.erase(),
                     frame: mux::Frame::OneCborItem,
                     handler: hs.contramap(Inputs::<Void>::Network),
-                    max_buffer: 5760,
+                    max_buffer: ingress_limit(PROTO_HANDSHAKE),
                 },
             )
             .await;

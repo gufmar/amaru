@@ -31,8 +31,8 @@ use crate::{
     peer_sharing::{PeerSharingMessage, ShareResult, register_peer_sharing_initiator, register_peer_sharing_responder},
     observability::register_observability_responder,
     protocol::{
-        Inputs, PROTO_HANDSHAKE, PROTO_N2N_BLOCK_FETCH, PROTO_N2N_CHAIN_SYNC, PROTO_N2N_KEEP_ALIVE,
-        PROTO_N2N_PEER_SHARE, PROTO_N2N_TX_SUB, Role,
+        Erased, Inputs, PROTO_HANDSHAKE, PROTO_N2N_BLOCK_FETCH, PROTO_N2N_CHAIN_SYNC, PROTO_N2N_KEEP_ALIVE,
+        PROTO_N2N_PEER_SHARE, PROTO_N2N_TX_SUB, ProtocolId, Role, ingress_limit,
     },
     protocol_messages::{
         handshake::HandshakeResult, version_data::VersionData, version_number::VersionNumber,
@@ -282,10 +282,10 @@ pub async fn stage(
                 State::Established(converge_use(s, &params, &eff).await)
             }
             (state @ (State::Initial | State::Handshake { .. }), msg @ ConnectionMessage::FetchBlocks { .. }) => {
-                // The peer might be still connecting. In that case we reschedule the message
-                // If the peer eventually can't be fully initialized, the caller timeout will trigger.
-                // We schedule after the reconnect delay (2s by default) which is shorter than the call
-                // timeout (5s) (whereas a full connection timeout is 10s).
+                // The peer might still be connecting. Reschedule until the attempt finishes;
+                // if it never does, the caller times out. The delay is the reconnect delay
+                // (2s by default), shorter than the 5s call timeout. The connect attempt
+                // itself fails after 2s.
                 eff.schedule_after(msg, params.config.reconnect_delay).await;
                 state
             }
@@ -347,14 +347,39 @@ async fn notify_chainsync_terminated(params: &Params, eff: &Effects<ConnectionMe
     .await;
 }
 
+/// Protocols whose bytes the mux holds until `Register` installs the handler.
+///
+/// A responder always serves. An initiator serves when it advertises full duplex, which is
+/// the case for every connection this node opens. Peer sharing is included when this side
+/// advertises it. Each direction asks [`ingress_limit`] for its own protocol id (the responder
+/// bit included). Any protocol id absent from this list still fails the connection.
+fn early_mini_protocol_buffers(advertisable: bool) -> Vec<(ProtocolId<Erased>, usize)> {
+    let mut both =
+        vec![PROTO_HANDSHAKE, PROTO_N2N_CHAIN_SYNC, PROTO_N2N_BLOCK_FETCH, PROTO_N2N_TX_SUB, PROTO_N2N_KEEP_ALIVE];
+    if advertisable {
+        both.push(PROTO_N2N_PEER_SHARE);
+    }
+    let mut buffers = Vec::with_capacity(both.len() * 2);
+    for id in both {
+        buffers.push((id.erase(), ingress_limit(id)));
+        buffers.push((id.responder().erase(), ingress_limit(id.responder())));
+    }
+    buffers
+}
+
 async fn do_initialize(
     Params { conn_id, role, magic, peer, config, .. }: &Params,
     eff: Effects<ConnectionMessage>,
 ) -> State {
     let peer = *peer;
+    // Same flags as the version table below. A responder always serves; an initiator serves
+    // when it advertises full duplex. Those are the protocols the mux may hold before `Register`.
+    let initiator_only = false;
+    let advertisable = true;
     let muxer = eff.stage("mux", mux::stage).await;
     let muxer = eff.supervise(muxer, ConnectionMessage::ChildDied(ChildId::Mux));
-    let muxer = eff.wire_up(muxer, mux::State::new(*conn_id, &[(PROTO_HANDSHAKE.erase(), 5760)], *role, peer)).await;
+    let early = early_mini_protocol_buffers(advertisable);
+    let muxer = eff.wire_up(muxer, mux::State::new(*conn_id, &early, *role, peer)).await;
 
     let handshake_result = eff.me_ref().contramap(ConnectionMessage::Handshake);
 
@@ -367,7 +392,7 @@ async fn do_initialize(
                 handshake::HandshakeInitiator::new(
                     muxer.clone(),
                     handshake_result,
-                    VersionTable::v11_through(config.max_n2n_version, *magic, false, true),
+                    VersionTable::v11_through(config.max_n2n_version, *magic, initiator_only, advertisable),
                 ),
             )
             .await
@@ -380,9 +405,7 @@ async fn do_initialize(
                 handshake::HandshakeResponder::new(
                     muxer.clone(),
                     handshake_result,
-                    // Use initiator_only_diffusion_mode = false so downstream peers
-                    // know we can serve as chainsync/blockfetch server
-                    VersionTable::v11_through(config.max_n2n_version, *magic, false, true),
+                    VersionTable::v11_through(config.max_n2n_version, *magic, initiator_only, advertisable),
                 ),
             )
             .await
@@ -395,8 +418,11 @@ async fn do_initialize(
         Role::Initiator => PROTO_HANDSHAKE.erase(),
         Role::Responder => PROTO_HANDSHAKE.responder().erase(),
     };
-    eff.send(&muxer, MuxMessage::Register { protocol, frame: mux::Frame::OneCborItem, handler, max_buffer: 5760 })
-        .await;
+    eff.send(
+        &muxer,
+        MuxMessage::Register { protocol, frame: mux::Frame::OneCborItem, handler, max_buffer: ingress_limit(protocol) },
+    )
+    .await;
 
     State::Handshake { muxer, handshake }
 }
@@ -766,6 +792,33 @@ mod tests {
     use tokio::runtime::Runtime;
 
     use super::*;
+
+    /// Limits installed for each mini-protocol id, initiator and responder.
+    ///
+    /// These are the mux ingress sizes from ouroboros-network `maximumIngressQueue`
+    /// (network-spec table 3.15; handshake is the 4×1440 transmission unit). The
+    /// assertion goes through [`early_mini_protocol_buffers`], which is what the mux
+    /// is constructed with — not a second copy of that table.
+    #[test]
+    fn ingress_limit_for_each_protocol_and_role() {
+        let buffers = early_mini_protocol_buffers(true);
+        let installed = |id: ProtocolId<Erased>| -> usize {
+            buffers.iter().find(|(proto, _)| *proto == id).map(|(_, n)| *n).expect("protocol is buffered")
+        };
+        for (id, expected) in [
+            (PROTO_HANDSHAKE, 5_760usize),
+            (PROTO_N2N_CHAIN_SYNC, 462_000),
+            (PROTO_N2N_BLOCK_FETCH, 23_068_694),
+            (PROTO_N2N_TX_SUB, 721_424),
+            (PROTO_N2N_KEEP_ALIVE, 1_408),
+            (PROTO_N2N_PEER_SHARE, 5_760),
+        ] {
+            assert_eq!(ingress_limit(id), expected, "initiator {id}");
+            assert_eq!(ingress_limit(id.responder()), expected, "responder {}", id.responder());
+            assert_eq!(installed(id.erase()), ingress_limit(id), "early initiator {id}");
+            assert_eq!(installed(id.responder().erase()), ingress_limit(id.responder()), "early responder {id}");
+        }
+    }
 
     #[test]
     fn test_fetch_blocks_in_initial_state_reschedules() {

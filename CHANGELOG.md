@@ -42,6 +42,39 @@ Other guiding principles:
 ### Fixed
 
 - **amaru**: `cardano-cli ping` from cardano-cli 11.2 onwards completes the handshake again. That client offers node-to-node version 16 alongside versions 14 and 15; version 16 is kept as raw CBOR and the node still agrees version 15. ([#1425](https://github.com/pragma-org/amaru/issues/1425))
+### Added
+
+- **amaru**: on preprod, preview, and other testnets, `amaru node run` forges blocks when given `--kes-signing-key-file`, `--vrf-signing-key-file`, and `--operational-certificate` (unencrypted cardano-cli files). Mainnet refuses those flags. Omitting them leaves the node a follower. Startup fails when the certificate's cold signature does not verify, or when its sequence number is not the chain's counter for that pool or exactly one ahead.
+- **amaru-bootstrap**: embedding applications can observe canonical bootstrap stages through a public API.
+- **amaru-node**: embedding applications can run cancellable Mithril synchronization through a public API.
+- **amaru**: `amaru dev env generate` to generate a (curated) list of environment variables available for Amaru main commands, acting as a configuration file.
+
+### Changed
+
+- **amaru**: a failed outbound connection attempt times out after 2 seconds. Each failure adds a large connection penalty, so healthier peers are dialed first. When no healthier peer can fill an open slot, the penalized peer is dialed anyway. A peer is not dialed again within 2 seconds of a connect attempt or a connection failure. ([#1428](https://github.com/pragma-org/amaru/issues/1428))
+- **amaru**: block fetch asks further peers 30ms, 80ms, and 150ms after the first request, until every block in that request has arrived. A peer that returns only a prefix does not stop the later asks, and a slow first announcer no longer waits out the 5s fetch timeout before anyone else is asked. ([#1423](https://github.com/pragma-org/amaru/issues/1423))
+- **amaru**: Debian and RPM environment files now list every supported node setting with its description, default, and expected type.
+
+### Fixed
+
+- **amaru**: a VRF signing key from `cardano-cli conway node key-gen-VRF` loads. The file is the 32-byte seed followed by the verification key.
+- **amaru-protocols**: chainsync no longer closes the connection when a peer pipelines headers. The ingress buffer for that protocol was 5760 bytes (the handshake and peer-sharing limit) instead of 462000 bytes. Block-fetch, tx-submission, and keep-alive now use the same ingress limits as cardano-node.
+- **amaru-protocols**: a new connection no longer drops when the peer's first chainsync (and other mini-protocol) segments arrive in the same burst as the handshake accept. Those segments are held until the handlers are registered, instead of being rejected as an unknown protocol.
+- **amaru-consensus**: a node whose ledger and chain store are both still at origin no longer stops block fetch during startup recovery. Recovery still stops when the ledger is at origin but the chain store already has a candidate.
+- **amaru**: starting with many upstream peers no longer panics when connection attempts fail together, or when many name lookups fail or many peers are demoted at the same time. ([#1428](https://github.com/pragma-org/amaru/issues/1428))
+- **amaru**: `cardano-cli ping` from cardano-cli 11.2 onwards completes the handshake again. That client offers node-to-node version 16 alongside versions 14 and 15; version 16 is kept as raw CBOR and the node still agrees version 15. ([#1425](https://github.com/pragma-org/amaru/issues/1425))
+- **amaru**: block propagation can be followed on its own. `AMARU_LOG=off,amaru::blockperf=info` prints, for each block, the first three peers that announced the header (`header.announced`, with rank), the peers asked for the body (`block.requested`), each peer that delivered the body in arrival order (`block.received`), and local adoption (`block.adopted`). The logging is at DEBUG level while syncing. ([#1396](https://github.com/pragma-org/amaru/issues/1396))
+- **amaru**: `chainsync.chain_lagging` is logged when near-now headers have been arriving for a minute and the adopted tip is not getting closer to the wall clock. It stays quiet while sync is still adopting faster than 10 blocks per second, including while sync is finishing. ([#1396](https://github.com/pragma-org/amaru/issues/1396))
+- **amaru-node**: `amaru mithril sync` can resume from stores created by `amaru node bootstrap`, including stores whose chain has no adopted best tip yet.
+- **amaru-node**: `amaru mithril sync --ingest-until-slot` downloads immutable files only through the chunk containing the requested slot.
+- **amaru-node**: node startup rejects incompatible ledger and adopted-chain tips and reports that recovery or rebootstrap is required.
+- **amaru-protocols**: BlockFetch rejects requests whose endpoint slot does not match the requested block hash.
+- **amaru-protocols**: a connection stays up when a peer starts a mini-protocol this node will serve before that protocol's handler is registered. On a connection this node accepted, that includes a handshake that arrives before the handshake handler is registered.
+- **amaru-node**: startup fails when the chain store is missing the ledger tip header or that header's parent.
+- **amaru**: after a chain switch, a block forged in the adopted block's slot extends that block's parent.
+- **amaru-node**: startup fails when the chain store is missing the ledger tip header. A bootstrap snapshot stores that tip without its parent block. Forging in the snapshot tip's own slot is skipped when that parent header is absent.
+- **amaru**: report errors on stderr when tracing isn't available on specific commands.
+- **amaru-uplc**: lazily size builtin arguments depending on the costing function; instead of systematically doing it upfront. Mean and median VM execution time reduced by ~20% thanks to this.
 
 ## [v10.11.20260925](https://github.com/pragma-org/amaru/releases/tag/v10.11.20260925)
 
@@ -93,7 +126,7 @@ Other guiding principles:
 - **amaru-protocols**: a deeply nested CBOR mini-protocol message no longer crashes the node with a stack overflow while mux is splitting frames.
 - **amaru-stores**: opening a ledger store before any snapshots exist returns a `NoStableSnapshot` error instead of panicking.
 
-## v10.11.20260910 _[unreleased; planned for 2026-09-10]_
+## v10.11.20260910 _[unreleased]_
 
 ### Added
 

@@ -22,8 +22,14 @@ use amaru_protocols::{manager::ManagerMessage, store_effects::Store};
 use amaru_pure_stage::{Effects, Instant, OrTerminateWith, StageRef};
 
 use crate::{
+    consensus_mode::ConsensusMode,
+    effects::UpdateConsensusModeEffect,
     performance::Performance,
-    stages::{block_source::BlockSourceMsg, select_chain::cmp_tip},
+    stages::{
+        block_source::BlockSourceMsg,
+        forge_block::{AdoptedTip, ForgeBlockMsg},
+        select_chain::{cmp_tip, load_parent_point},
+    },
 };
 
 /// The AdoptChain stage decides whether (and how) to adopt a newly validated
@@ -45,7 +51,8 @@ use crate::{
 ///   `consensus_security_param` ("k") blocks behind the new tip; the height
 ///   walk uses a consistent snapshot effect; only the write is separate;
 ///   never moves backward; may be a no-op if no suitable anchor found).
-/// - Then (after logging with 1s suppression for catch-up): three `eff.send`s
+/// - Then (after logging; while syncing, identical lines inside one second are debug and counted
+///   in `suppressed`; while live, every adoption is info): three `eff.send`s
 ///   (in this exact order):
 ///   1. `MempoolMsg::NewTip(tip)` — to the mempool (to flush invalidated txs
 ///      and adjust to the new tip).
@@ -91,6 +98,8 @@ pub struct AdoptChain {
     downstream: StageRef<ManagerMessage>,
     block_source: StageRef<BlockSourceMsg>,
     mempool: StageRef<MempoolMsg>,
+    /// Present when this node has forging credentials. Absent on a follower.
+    forge: Option<StageRef<ForgeBlockMsg>>,
     consensus_security_param: u64,
     current_best_tip: Point,
     max_block_height: BlockHeight,
@@ -110,12 +119,18 @@ impl AdoptChain {
             downstream,
             block_source,
             mempool,
+            forge: None,
             consensus_security_param,
             current_best_tip,
             max_block_height: BlockHeight::from(0),
             last_printed: Instant::at_offset(Duration::ZERO, Duration::ZERO),
             suppressed: 0,
         }
+    }
+
+    pub fn with_forge(mut self, forge: StageRef<ForgeBlockMsg>) -> Self {
+        self.forge = Some(forge);
+        self
     }
 }
 
@@ -229,8 +244,10 @@ pub async fn stage(mut state: AdoptChain, msg: AdoptChainMsg, eff: Effects<Adopt
             })
             .await;
 
-        // do not print every single block while catching up
-        if now.saturating_since(state.last_printed) >= Duration::from_secs(1) {
+        let mode = eff.external(UpdateConsensusModeEffect { slot: msg.slot(), now }).await;
+        eff.external(Performance::record_sync_adoption(now, mode.is_live())).await;
+        // While syncing, print at most one adoption per second. While live, print every one.
+        if mode == ConsensusMode::Live || now.saturating_since(state.last_printed) >= Duration::from_secs(1) {
             info!(
                 consensus::tip::ADOPT,
                 slot = msg.slot(),
@@ -255,6 +272,12 @@ pub async fn stage(mut state: AdoptChain, msg: AdoptChainMsg, eff: Effects<Adopt
         eff.send(&state.mempool, MempoolMsg::NewTip(msg)).await;
         eff.send(&state.downstream, ManagerMessage::NewTip(msg, root_trace_context)).await;
         eff.send(&state.block_source, BlockSourceMsg::AdoptedTip(msg)).await;
+        if let Some(forge) = &state.forge {
+            // The previous best is the parent only on a roll-forward. A fork switch displaces
+            // that tip, so a later same-slot forge has to extend the adopted header's parent.
+            let parent = load_parent_point(&eff, &store, &incoming_header).await;
+            eff.send(forge, ForgeBlockMsg::from(AdoptedTip { tip: msg, parent })).await;
+        }
         state.current_best_tip = msg;
         state
     }

@@ -88,10 +88,13 @@ pub mod value_names {
     /// A byte size, either a raw count or a unit such as `100MiB` or `10kB`.
     pub const SIZE: &str = "SIZE";
 
+    /// A key/value string pair.
+    pub const STR_KEY_VALUE: &str = "KEY=value";
+
     /// A non-negative integer value.
     pub const UINT: &str = "UINT";
 
-    /// A non-negative integer value, or the keyword 'all'
+    /// A non-negative integer value, or the keyword `all`.
     pub const UINT_ALL: &str = "UINT|all";
 
     /// For HTTP or HTTPS URLs.
@@ -117,6 +120,9 @@ pub mod env_vars {
 
     /// --header-file
     pub const HEADER_FILE: &str = "AMARU_HEADER_FILE";
+
+    /// --kes-signing-key-file
+    pub const KES_SIGNING_KEY_FILE: &str = "AMARU_KES_SIGNING_KEY_FILE";
 
     /// --headers-dir
     pub const HEADERS_DIR: &str = "AMARU_HEADERS_DIR";
@@ -193,6 +199,9 @@ pub mod env_vars {
     /// --snapshots-dir
     pub const SNAPSHOTS_DIR: &str = "AMARU_SNAPSHOTS_DIR";
 
+    /// --operational-certificate
+    pub const OPERATIONAL_CERTIFICATE: &str = "AMARU_OPERATIONAL_CERTIFICATE";
+
     /// --submit-api-address
     pub const SUBMIT_API_ADDRESS: &str = "AMARU_SUBMIT_API_ADDRESS";
 
@@ -204,4 +213,7 @@ pub mod env_vars {
 
     /// --target-dir
     pub const TARGET_DIR: &str = "AMARU_TARGET_DIR";
+
+    /// --vrf-signing-key-file
+    pub const VRF_SIGNING_KEY_FILE: &str = "AMARU_VRF_SIGNING_KEY_FILE";
 }

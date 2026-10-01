@@ -33,6 +33,7 @@ use crate::{
     mux::{Frame, HandlerMessage, MuxMessage, Sent},
     protocol::{
         Inputs, Internal, MuxClient, NETWORK_SEND_TIMEOUT, PROTO_N2N_BLOCK_FETCH, Pull, ToMux, WantNext, from_wire,
+        ingress_limit,
     },
     store_effects::Store,
 };
@@ -106,8 +107,11 @@ impl PointsRange {
         if from == through {
             return if let Some(block) = store.load_block(&from.hash()).await? {
                 match block.decode_header() {
-                    Ok(header) => Ok(Some(PointsRange::singleton(header.point()))),
+                    Ok(header) if NetworkPoint::from(header.point()) == from => {
+                        Ok(Some(PointsRange::singleton(header.point())))
+                    }
                     Err(_) => Ok(None),
+                    Ok(_) => Ok(None),
                 }
             } else {
                 Ok(None)
@@ -131,9 +135,16 @@ impl PointsRange {
                 return Ok(None);
             };
             if let Ok(header) = block.decode_header() {
-                result.push(header.point());
+                let point = header.point();
+                if result.is_empty() && NetworkPoint::from(point) != through {
+                    return Ok(None);
+                }
+                result.push(point);
                 // if we found the from point, we're done
                 if current_hash == from.hash() {
+                    if NetworkPoint::from(point) != from {
+                        return Ok(None);
+                    }
                     break;
                 }
                 // if we reached a slot before 'from', abort
@@ -275,13 +286,14 @@ pub async fn register_blockfetch_responder<M: amaru_pure_stage::SendData>(
     let blockfetch = eff.stage("blockfetch-responder", instance).await;
     let blockfetch = eff.supervise(blockfetch, tombstone);
     let blockfetch = eff.wire_up(blockfetch, Instance::new(mux, peer)).await;
+    let protocol = PROTO_N2N_BLOCK_FETCH.responder().erase();
     eff.send(
         muxer,
         MuxMessage::Register {
-            protocol: PROTO_N2N_BLOCK_FETCH.responder().erase(),
+            protocol,
             frame: Frame::OneCborItem,
             handler: blockfetch.contramap(Inputs::Network),
-            max_buffer: 2_500_000,
+            max_buffer: ingress_limit(protocol),
         },
     )
     .await;

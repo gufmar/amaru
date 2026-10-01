@@ -4,6 +4,138 @@
   "title": "Amaru Trace Schemas",
   "description": "JSON Schema definitions for all registered traces in Amaru",
   "definitions": {
+    "amaru::blockperf::block::ADOPTED": {
+      "type": "object",
+      "properties": {
+        "header_hash": {
+          "title": "Hash<32>",
+          "description": "hex-encoded hash",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "peer": {
+          "type": "string"
+        },
+        "slot_latency_ms": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "header_hash"
+      ],
+      "optional": [
+        "peer",
+        "slot_latency_ms"
+      ],
+      "additionalProperties": false,
+      "name": "adopted",
+      "level": "TRACE",
+      "target": "amaru::blockperf::block",
+      "description": "The block was adopted locally. `peer` is the first peer that delivered the body, when a delivery was recorded. `slot_latency_ms` is milliseconds since the onset of this block's slot.",
+      "public": true
+    },
+    "amaru::blockperf::block::RECEIVED": {
+      "type": "object",
+      "properties": {
+        "peer": {
+          "type": "string"
+        },
+        "header_hash": {
+          "title": "Hash<32>",
+          "description": "hex-encoded hash",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "rank": {
+          "type": "integer"
+        },
+        "slot_latency_ms": {
+          "type": "integer"
+        },
+        "fetch_latency_ms": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "peer",
+        "header_hash",
+        "rank"
+      ],
+      "optional": [
+        "slot_latency_ms",
+        "fetch_latency_ms"
+      ],
+      "additionalProperties": false,
+      "name": "received",
+      "level": "TRACE",
+      "target": "amaru::blockperf::block",
+      "description": "A distinct peer delivered this block body. `rank` is 1 for the first delivery, then 2, 3, … in arrival order. `slot_latency_ms` is milliseconds since the onset of this block's slot. `fetch_latency_ms` is milliseconds since the request was sent to this peer.",
+      "public": true
+    },
+    "amaru::blockperf::block::REQUESTED": {
+      "type": "object",
+      "properties": {
+        "header_hash": {
+          "title": "Hash<32>",
+          "description": "hex-encoded hash",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "peers": {
+          "type": "string"
+        },
+        "slot_latency_ms": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "header_hash",
+        "peers"
+      ],
+      "optional": [
+        "slot_latency_ms"
+      ],
+      "additionalProperties": false,
+      "name": "requested",
+      "level": "TRACE",
+      "target": "amaru::blockperf::block",
+      "description": "Peers asked to fetch this block body. `peers` is a comma-separated list of socket addresses, sorted. `slot_latency_ms` is milliseconds since the onset of this block's slot.",
+      "public": true
+    },
+    "amaru::blockperf::header::ANNOUNCED": {
+      "type": "object",
+      "properties": {
+        "peer": {
+          "type": "string"
+        },
+        "header_hash": {
+          "title": "Hash<32>",
+          "description": "hex-encoded hash",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "rank": {
+          "type": "integer"
+        },
+        "slot_latency_ms": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "peer",
+        "header_hash",
+        "rank"
+      ],
+      "optional": [
+        "slot_latency_ms"
+      ],
+      "additionalProperties": false,
+      "name": "announced",
+      "level": "TRACE",
+      "target": "amaru::blockperf::header",
+      "description": "One of the first three distinct peers to announce this header while it is still being collected. A header that is already stored does not start a new line, and a header that has been adopted is not announced again. `rank` is 1, 2, or 3 in arrival order. Later peers are not logged. `slot_latency_ms` is milliseconds since the onset of this block's slot.",
+      "public": true
+    },
     "amaru::bootstrap::COMPLETE": {
       "type": "object",
       "properties": {
@@ -456,120 +588,92 @@
       "description": "Import treasury/reserves/fees pots from a snapshot",
       "public": true
     },
-    "amaru::bootstrap::progress::CANCEL": {
-      "type": "object",
-      "properties": {
-        "phase": {
-          "type": "string"
-        },
-        "current": {
-          "type": "integer"
-        },
-        "elapsed_seconds": {
-          "type": "number"
-        },
-        "total": {
-          "type": "integer"
-        }
-      },
-      "required": [
-        "phase",
-        "current",
-        "elapsed_seconds"
-      ],
-      "optional": [
-        "total"
-      ],
-      "additionalProperties": false,
-      "name": "cancel",
-      "level": "TRACE",
-      "target": "amaru::bootstrap::progress",
-      "description": "Cancel a long-running bootstrap phase",
-      "public": true
-    },
     "amaru::bootstrap::progress::COMPLETE": {
       "type": "object",
       "properties": {
-        "phase": {
+        "epoch": {
+          "title": "uint64",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "point": {
           "type": "string"
-        },
-        "current": {
-          "type": "integer"
-        },
-        "elapsed_seconds": {
-          "type": "number"
-        },
-        "total": {
-          "type": "integer"
         }
       },
       "required": [
-        "phase",
-        "current",
-        "elapsed_seconds"
+        "epoch",
+        "point"
       ],
-      "optional": [
-        "total"
-      ],
+      "optional": [],
       "additionalProperties": false,
       "name": "complete",
       "level": "TRACE",
       "target": "amaru::bootstrap::progress",
-      "description": "Complete a long-running bootstrap phase",
+      "description": "Report successful bootstrap completion",
       "public": true
     },
-    "amaru::bootstrap::progress::START": {
+    "amaru::bootstrap::progress::DOWNLOAD": {
       "type": "object",
       "properties": {
-        "phase": {
-          "type": "string"
+        "downloaded_bytes": {
+          "type": "integer"
         },
-        "total": {
+        "completed_snapshots": {
           "type": "integer"
         }
       },
       "required": [
-        "phase"
+        "downloaded_bytes",
+        "completed_snapshots"
       ],
-      "optional": [
-        "total"
-      ],
+      "optional": [],
       "additionalProperties": false,
-      "name": "start",
+      "name": "download",
       "level": "TRACE",
       "target": "amaru::bootstrap::progress",
-      "description": "Start a long-running bootstrap phase",
+      "description": "Report absolute aggregate snapshot download progress",
       "public": true
     },
-    "amaru::bootstrap::progress::UPDATE": {
+    "amaru::bootstrap::progress::SNAPSHOTS_SELECTED": {
       "type": "object",
       "properties": {
-        "phase": {
-          "type": "string"
-        },
-        "current": {
+        "snapshot_count": {
           "type": "integer"
         },
-        "elapsed_seconds": {
-          "type": "number"
-        },
-        "total": {
+        "total_bytes": {
           "type": "integer"
         }
       },
       "required": [
-        "phase",
-        "current",
-        "elapsed_seconds"
+        "snapshot_count"
       ],
       "optional": [
-        "total"
+        "total_bytes"
       ],
       "additionalProperties": false,
-      "name": "update",
+      "name": "snapshots_selected",
       "level": "TRACE",
       "target": "amaru::bootstrap::progress",
-      "description": "Report non-terminal progress for a long-running bootstrap phase",
+      "description": "Report the selected snapshot window and its aggregate compressed size",
+      "public": true
+    },
+    "amaru::bootstrap::progress::STAGE": {
+      "type": "object",
+      "properties": {
+        "stage": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "stage",
+      "level": "TRACE",
+      "target": "amaru::bootstrap::progress",
+      "description": "Enter a canonical bootstrap stage",
       "public": true
     },
     "amaru::bootstrap::proposal_roots::IMPORT": {
@@ -3697,6 +3801,42 @@
       "description": "A database migration relies on an assumption that may not hold; see the reason",
       "public": true
     },
+    "amaru::consensus::chainsync::CHAIN_LAGGING": {
+      "type": "object",
+      "properties": {
+        "peer": {
+          "type": "string"
+        },
+        "live_slot": {
+          "title": "uint64",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "our_slot": {
+          "title": "uint64",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "lag": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "peer",
+        "live_slot",
+        "our_slot",
+        "lag"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "chain_lagging",
+      "level": "TRACE",
+      "target": "amaru::consensus::chainsync",
+      "description": "Near-now headers have been arriving for a minute and the adopted tip is not getting closer to the wall clock. Sync that is still adopting faster than 10 blocks per second does not raise this. Emitted at most once a minute.",
+      "public": true
+    },
     "amaru::consensus::chainsync::INITIALIZED": {
       "type": "object",
       "properties": {
@@ -4142,6 +4282,24 @@
       "description": "Forging the header or storing it failed. The node shuts down. Step ∈ {sign_header, validate_header, store_header, store_block}.",
       "public": true
     },
+    "amaru::consensus::forge::KES_PERIOD": {
+      "type": "object",
+      "properties": {
+        "period": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "period"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "kes_period",
+      "level": "TRACE",
+      "target": "amaru::consensus::forge",
+      "description": "The in-memory KES key moved to a new period.",
+      "public": true
+    },
     "amaru::consensus::forge::MISSED_SLOT": {
       "type": "object",
       "properties": {
@@ -4164,7 +4322,7 @@
       "name": "missed_slot",
       "level": "TRACE",
       "target": "amaru::consensus::forge",
-      "description": "A led slot was not forged. Reason ∈ {ocert_not_yet_valid, ocert_expired, tip_ahead, not_led, woke_late}.",
+      "description": "A led slot was not forged. Reason ∈ {ocert_not_yet_valid, ocert_expired, tip_ahead, not_led, woke_late, parent_not_stored}.",
       "public": true
     },
     "amaru::consensus::forge::SCHEDULE": {
@@ -4280,7 +4438,7 @@
       "name": "lifecycle",
       "level": "TRACE",
       "target": "amaru::consensus::perf::header",
-      "description": "Event recorded once per header, when its processing reaches a terminal state. It covers the four network-health processing points of a header's lifecycle: reception of the header, request of its block, reception of its block and local adoption of the block. `outcome` describes the terminal state (including headers rejected on reception, which carry no durations). The optional durations are the intervals between those points: - `block_fetch_wait_micros`: reception of the header to the request of its block - `block_fetch_micros`: request of the block to its reception - `forward_micros`: reception of the header to the adoption of its block",
+      "description": "Event recorded once per header, when its processing reaches a terminal state. The four network-health points themselves are the `amaru::blockperf` events (`header.announced`, `block.requested`, `block.received`, `block.adopted`). This event carries the intervals between those points once the header reaches a terminal state. `outcome` describes that state (including headers rejected on reception, which carry no durations). The optional durations are: - `block_fetch_wait_micros`: reception of the header to the request of its block - `block_fetch_micros`: request of the block to its reception - `forward_micros`: reception of the header to the adoption of its block",
       "public": true
     },
     "amaru::consensus::performance::QUEUE_LAGGING": {
@@ -4379,6 +4537,35 @@
       "level": "TRACE",
       "target": "amaru::consensus::tip",
       "description": "Adopt a tip as the next tip in the best chain",
+      "public": true
+    },
+    "amaru::consensus::tip::MODE": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "previous": {
+          "type": "string"
+        },
+        "slot": {
+          "title": "uint64",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      },
+      "required": [
+        "mode",
+        "previous",
+        "slot"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "mode",
+      "level": "TRACE",
+      "target": "amaru::consensus::tip",
+      "description": "The node switched between catching up and live. `mode` and `previous` ∈ {sync, live}.",
       "public": true
     },
     "amaru::ledger::account::PAY_OR_REFUND": {
@@ -6381,6 +6568,175 @@
       "description": "Transaction rejected at insertion. Reason ∈ {invalid, duplicate, mempool_full}.",
       "public": true
     },
+    "amaru::mithril::progress::COMPLETE": {
+      "type": "object",
+      "properties": {
+        "point": {
+          "title": "Point",
+          "description": "Origin is an empty array. Specific points are [slot, header hash, block height]. The hash is a hex string in JSON; CBOR transport uses a byte string.",
+          "oneOf": [
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "array",
+              "items": [
+                {
+                  "description": "slot",
+                  "type": "integer"
+                },
+                {
+                  "description": "header hash",
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                {
+                  "description": "block height",
+                  "type": "integer"
+                }
+              ],
+              "maxItems": 3,
+              "minItems": 3
+            }
+          ]
+        },
+        "processed_blocks": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "point",
+        "processed_blocks"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "complete",
+      "level": "TRACE",
+      "target": "amaru::mithril::progress",
+      "description": "Mithril synchronization completed successfully",
+      "public": true
+    },
+    "amaru::mithril::progress::DOWNLOAD": {
+      "type": "object",
+      "properties": {
+        "downloaded_bytes": {
+          "type": "integer"
+        },
+        "completed_files": {
+          "type": "integer"
+        },
+        "total_files": {
+          "type": "integer"
+        },
+        "total_bytes": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "downloaded_bytes",
+        "completed_files",
+        "total_files"
+      ],
+      "optional": [
+        "total_bytes"
+      ],
+      "additionalProperties": false,
+      "name": "download",
+      "level": "TRACE",
+      "target": "amaru::mithril::progress",
+      "description": "Absolute Mithril database download progress",
+      "public": true
+    },
+    "amaru::mithril::progress::INGEST": {
+      "type": "object",
+      "properties": {
+        "blocks": {
+          "type": "integer"
+        },
+        "point": {
+          "title": "Point",
+          "description": "Origin is an empty array. Specific points are [slot, header hash, block height]. The hash is a hex string in JSON; CBOR transport uses a byte string.",
+          "oneOf": [
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "array",
+              "items": [
+                {
+                  "description": "slot",
+                  "type": "integer"
+                },
+                {
+                  "description": "header hash",
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                {
+                  "description": "block height",
+                  "type": "integer"
+                }
+              ],
+              "maxItems": 3,
+              "minItems": 3
+            }
+          ]
+        }
+      },
+      "required": [
+        "blocks",
+        "point"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "ingest",
+      "level": "TRACE",
+      "target": "amaru::mithril::progress",
+      "description": "Absolute block ingestion progress",
+      "public": true
+    },
+    "amaru::mithril::progress::SNAPSHOT": {
+      "type": "object",
+      "properties": {
+        "hash": {
+          "type": "string"
+        },
+        "through_chunk": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "hash",
+        "through_chunk"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "snapshot",
+      "level": "TRACE",
+      "target": "amaru::mithril::progress",
+      "description": "Selected the applicable Mithril snapshot",
+      "public": true
+    },
+    "amaru::mithril::progress::STAGE": {
+      "type": "object",
+      "properties": {
+        "stage": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "stage",
+      "level": "TRACE",
+      "target": "amaru::mithril::progress",
+      "description": "Mithril synchronization entered a new stage",
+      "public": true
+    },
     "amaru::mithril::snapshot::DOWNLOAD": {
       "type": "object",
       "properties": {
@@ -6539,6 +6895,35 @@
       "level": "TRACE",
       "target": "amaru::network::connection",
       "description": "Aborted an existing listener task so the address can be rebound on restart",
+      "public": true
+    },
+    "amaru::node::build::FORGING": {
+      "type": "object",
+      "properties": {
+        "pool_id": {
+          "title": "Hash<28>",
+          "description": "hex-encoded hash",
+          "type": "string",
+          "pattern": "^[0-9a-f]{56}$"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "kes_period": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pool_id",
+        "sequence",
+        "kes_period"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "forging",
+      "level": "TRACE",
+      "target": "amaru::node::build",
+      "description": "Block forging is configured from key files.",
       "public": true
     },
     "amaru::node::build::LEDGER_OPENED": {
@@ -7116,24 +7501,6 @@
       "level": "TRACE",
       "target": "amaru::protocols::manager::peer",
       "description": "A connection request for a peer was discarded. Reason ∈ {already_connected_or_scheduled, already_connected, not_added}.",
-      "public": true
-    },
-    "amaru::protocols::manager::peer::CONNECT_EXHAUSTED": {
-      "type": "object",
-      "properties": {
-        "peer": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "peer"
-      ],
-      "optional": [],
-      "additionalProperties": false,
-      "name": "connect_exhausted",
-      "level": "TRACE",
-      "target": "amaru::protocols::manager::peer",
-      "description": "A peer is dropped after exhausting its connection attempts",
       "public": true
     },
     "amaru::protocols::manager::peer::CONNECT_FAILED": {

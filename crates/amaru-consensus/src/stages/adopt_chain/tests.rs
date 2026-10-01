@@ -18,7 +18,7 @@ use amaru_kernel::{HeaderHash, NonEmptyVec, ORIGIN_HASH};
 use amaru_observability::tracing::Level;
 use amaru_ouroboros::MempoolMsg;
 use amaru_ouroboros_traits::BaseReadChainStore;
-use amaru_pure_stage::{Instant, trace_buffer::TerminationReason};
+use amaru_pure_stage::{Instant, StageRef, trace_buffer::TerminationReason};
 use test_setup::{
     assert_trace, setup, te_find_ancestor_on_best_chain, te_load_header, te_terminate, te_terminated, test_prep,
 };
@@ -26,9 +26,10 @@ use test_setup::{
 use super::*;
 use crate::stages::{
     adopt_chain::test_setup::{
-        te_clock, te_find_anchor_at_height, te_prune_below, te_roll_forward_chain, te_send, te_set_anchor_point,
-        te_switch_to_fork,
+        te_clock, te_find_anchor_at_height, te_prune_below, te_record_sync_adoption, te_roll_forward_chain, te_send,
+        te_set_anchor_point, te_switch_to_fork, te_update_consensus_mode,
     },
+    forge_block::{AdoptedTip, ForgeBlockMsg},
     test_utils::{te_input, te_state},
 };
 
@@ -126,7 +127,6 @@ fn test_extension_adopts_and_sends() {
 
     let mut expected = prep.state.clone();
     expected.current_best_tip = tip;
-    expected.suppressed = 1;
     assert_trace(
         &running,
         &[
@@ -139,6 +139,8 @@ fn test_extension_adopts_and_sends() {
             te_set_anchor_point("ac-1", prep.headers.h1.point()),
             te_clock("ac-1"),
             te_prune_below("ac-1", tip.block_height() - 2, sim_clock()),
+            te_update_consensus_mode("ac-1", tip.slot(), sim_clock()),
+            te_record_sync_adoption("ac-1", sim_clock(), true),
             te_send("ac-1", "mempool", MempoolMsg::NewTip(tip)),
             te_send("ac-1", "downstream", ManagerMessage::new_tip(tip)),
             te_send("ac-1", "block_source", BlockSourceMsg::AdoptedTip(tip)),
@@ -151,7 +153,7 @@ fn test_extension_adopts_and_sends() {
     assert_eq!(prep.store.get_anchor_hash(), prep.headers.h1.hash());
 
     logs.assert_and_remove(
-        Level::DEBUG,
+        Level::INFO,
         &[
             "tip.adopt",
             &format!(r#"header_hash="{}""#, prep.headers.h3.hash()),
@@ -160,6 +162,7 @@ fn test_extension_adopts_and_sends() {
             "suppressed=0",
         ],
     )
+    .assert_and_remove(Level::INFO, &["tip.mode", r#"mode="live""#, r#"previous="sync""#])
     .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
 }
 
@@ -179,7 +182,6 @@ fn test_fork_switch_adopts_and_sends() {
 
     let mut expected = prep.state.clone();
     expected.current_best_tip = tip;
-    expected.suppressed = 1;
     assert_trace(
         &running,
         &[
@@ -197,6 +199,8 @@ fn test_fork_switch_adopts_and_sends() {
             te_set_anchor_point("ac-1", prep.headers.h1.point()),
             te_clock("ac-1"),
             te_prune_below("ac-1", tip.block_height() - 2, sim_clock()),
+            te_update_consensus_mode("ac-1", tip.slot(), sim_clock()),
+            te_record_sync_adoption("ac-1", sim_clock(), true),
             te_send("ac-1", "mempool", MempoolMsg::NewTip(tip)),
             te_send("ac-1", "downstream", ManagerMessage::new_tip(tip)),
             te_send("ac-1", "block_source", BlockSourceMsg::AdoptedTip(tip)),
@@ -209,7 +213,7 @@ fn test_fork_switch_adopts_and_sends() {
     assert_eq!(prep.store.get_anchor_hash(), prep.headers.h1.hash());
 
     logs.assert_and_remove(
-        Level::DEBUG,
+        Level::INFO,
         &[
             "tip.adopt",
             &format!(r#"header_hash="{}""#, prep.headers.h3a.hash()),
@@ -218,7 +222,28 @@ fn test_fork_switch_adopts_and_sends() {
             "suppressed=0",
         ],
     )
+    .assert_and_remove(Level::INFO, &["tip.mode", r#"mode="live""#, r#"previous="sync""#])
     .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
+}
+
+/// A fork switch must tell forge the adopted header's parent, not the displaced best tip.
+#[test]
+fn fork_switch_tells_forge_the_adopted_headers_parent() {
+    let mut prep = test_prep(2);
+    prep.store_headers(&prep.headers.all());
+    prep.store_block(&prep.headers.h2a);
+    prep.store_block(&prep.headers.h3a);
+    prep.set_anchor(prep.headers.h0.hash());
+    prep.set_best_chain(prep.headers.h2.clone());
+    prep.state = prep.state.clone().with_forge(StageRef::named_for_tests("forge"));
+
+    let tip = prep.headers.h3a.point();
+    let msg = AdoptChainMsg::new(tip, BlockHeight::new(0));
+    let (running, _guards, _logs) = setup(&prep, msg);
+
+    let expected = te_send("ac-1", "forge", ForgeBlockMsg::from(AdoptedTip { tip, parent: prep.headers.h2a.point() }));
+    let trace = running.trace_buffer().lock();
+    assert!(trace.iter_entries().any(|(_, entry)| entry == expected), "forge was not told the adopted header's parent",);
 }
 
 #[test]
@@ -235,7 +260,6 @@ fn test_fork_switch_opcert_hacked() {
 
     let mut expected = prep.state.clone();
     expected.current_best_tip = tip;
-    expected.suppressed = 1;
     assert_trace(
         &running,
         &[
@@ -248,6 +272,8 @@ fn test_fork_switch_opcert_hacked() {
             te_find_anchor_at_height("ac-1", BlockHeight::new(1)),
             te_clock("ac-1"),
             te_prune_below("ac-1", tip.block_height() - 2, sim_clock()),
+            te_update_consensus_mode("ac-1", tip.slot(), sim_clock()),
+            te_record_sync_adoption("ac-1", sim_clock(), true),
             te_send("ac-1", "mempool", MempoolMsg::NewTip(tip)),
             te_send("ac-1", "downstream", ManagerMessage::new_tip(tip)),
             te_send("ac-1", "block_source", BlockSourceMsg::AdoptedTip(tip)),
@@ -260,7 +286,7 @@ fn test_fork_switch_opcert_hacked() {
     assert_eq!(prep.store.get_anchor_hash(), prep.headers.h0.hash());
 
     logs.assert_and_remove(
-        Level::DEBUG,
+        Level::INFO,
         &[
             "tip.adopt",
             &format!(r#"header_hash="{}""#, prep.headers.h2.hash()),
@@ -269,6 +295,7 @@ fn test_fork_switch_opcert_hacked() {
             "suppressed=0",
         ],
     )
+    .assert_and_remove(Level::INFO, &["tip.mode", r#"mode="live""#, r#"previous="sync""#])
     .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
 }
 

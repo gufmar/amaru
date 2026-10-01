@@ -439,6 +439,15 @@ define_schemas! {
                     required peer: %amaru_kernel::Peer
                     required error: String
                 }
+                /// Near-now headers have been arriving for a minute and the adopted tip is not
+                /// getting closer to the wall clock. Sync that is still adopting faster than 10
+                /// blocks per second does not raise this. Emitted at most once a minute.
+                public CHAIN_LAGGING {
+                    required peer: %amaru_kernel::Peer
+                    required live_slot: amaru_kernel::Slot
+                    required our_slot: amaru_kernel::Slot
+                    required lag: i64
+                }
                 /// A header's validation is held back until what blocks it resolves.
                 /// Reason ∈ {ledger_height, stake_distribution, clock_skew, follow_up}; the height
                 /// fields are present for `ledger_height`, where they say how far behind we are.
@@ -575,6 +584,13 @@ define_schemas! {
                 }
             }
             tip {
+                /// The node switched between catching up and live.
+                /// `mode` and `previous` ∈ {sync, live}.
+                public MODE {
+                    required mode: String
+                    required previous: String
+                    required slot: amaru_kernel::Slot
+                }
                 /// Adopt a tip as the next tip in the best chain
                 public ADOPT {
                     required slot: amaru_kernel::Slot
@@ -586,7 +602,7 @@ define_schemas! {
             }
             forge {
                 /// A led slot was not forged.
-                /// Reason ∈ {ocert_not_yet_valid, ocert_expired, tip_ahead, not_led, woke_late}.
+                /// Reason ∈ {ocert_not_yet_valid, ocert_expired, tip_ahead, not_led, woke_late, parent_not_stored}.
                 public MISSED_SLOT {
                     required slot: amaru_kernel::Slot
                     required reason: String
@@ -613,6 +629,10 @@ define_schemas! {
                     required header_hash: amaru_kernel::HeaderHash
                     required parent: amaru_kernel::HeaderHash
                 }
+                /// The in-memory KES key moved to a new period.
+                public KES_PERIOD {
+                    required period: %amaru_kernel::KesPeriod
+                }
             }
             peer {
                 tags: cpu
@@ -624,11 +644,11 @@ define_schemas! {
             perf {
                 header {
                     /// Event recorded once per header, when its processing reaches a terminal state.
-                    /// It covers the four network-health processing points of a header's lifecycle:
-                    /// reception of the header, request of its block, reception of its block and
-                    /// local adoption of the block. `outcome` describes the terminal state (including
-                    /// headers rejected on reception, which carry no durations). The optional
-                    /// durations are the intervals between those points:
+                    /// The four network-health points themselves are the `amaru::blockperf` events
+                    /// (`header.announced`, `block.requested`, `block.received`, `block.adopted`).
+                    /// This event carries the intervals between those points once the header reaches
+                    /// a terminal state. `outcome` describes that state (including headers rejected
+                    /// on reception, which carry no durations). The optional durations are:
                     /// - `block_fetch_wait_micros`: reception of the header to the request of its block
                     /// - `block_fetch_micros`: request of the block to its reception
                     /// - `forward_micros`: reception of the header to the adoption of its block
@@ -651,6 +671,50 @@ define_schemas! {
                         optional outcome: String
                         optional duration_micros: u64
                     }
+                }
+            }
+        }
+        blockperf {
+            header {
+                /// One of the first three distinct peers to announce this header while it is still
+                /// being collected. A header that is already stored does not start a new line, and
+                /// a header that has been adopted is not announced again.
+                /// `rank` is 1, 2, or 3 in arrival order. Later peers are not logged.
+                /// `slot_latency_ms` is milliseconds since the onset of this block's slot.
+                public ANNOUNCED {
+                    required peer: %amaru_kernel::Peer
+                    required header_hash: amaru_kernel::HeaderHash
+                    required rank: u64
+                    optional slot_latency_ms: u64
+                }
+            }
+            block {
+                /// Peers asked to fetch this block body. `peers` is a comma-separated list of
+                /// socket addresses, sorted.
+                /// `slot_latency_ms` is milliseconds since the onset of this block's slot.
+                public REQUESTED {
+                    required header_hash: amaru_kernel::HeaderHash
+                    required peers: String
+                    optional slot_latency_ms: u64
+                }
+                /// A distinct peer delivered this block body.
+                /// `rank` is 1 for the first delivery, then 2, 3, … in arrival order.
+                /// `slot_latency_ms` is milliseconds since the onset of this block's slot.
+                /// `fetch_latency_ms` is milliseconds since the request was sent to this peer.
+                public RECEIVED {
+                    required peer: %amaru_kernel::Peer
+                    required header_hash: amaru_kernel::HeaderHash
+                    required rank: u64
+                    optional slot_latency_ms: u64
+                    optional fetch_latency_ms: u64
+                }
+                /// The block was adopted locally.
+                /// `peer` is the first peer that delivered the body, when a delivery was recorded.
+                /// `slot_latency_ms` is milliseconds since the onset of this block's slot.
+                public ADOPTED {
+                    required header_hash: amaru_kernel::HeaderHash
+                    optional peer: %amaru_kernel::Peer
+                    optional slot_latency_ms: u64
                 }
             }
         }
@@ -1244,31 +1308,24 @@ define_schemas! {
                 }
             }
             progress {
-                /// Start a long-running bootstrap phase
-                public START {
-                    required phase: String
-                    optional total: usize
+                /// Enter a canonical bootstrap stage
+                public STAGE {
+                    required stage: String
                 }
-                /// Report non-terminal progress for a long-running bootstrap phase
-                public UPDATE {
-                    required phase: String
-                    required current: usize
-                    optional total: usize
-                    required elapsed_seconds: f64
+                /// Report the selected snapshot window and its aggregate compressed size
+                public SNAPSHOTS_SELECTED {
+                    required snapshot_count: usize
+                    optional total_bytes: u64
                 }
-                /// Cancel a long-running bootstrap phase
-                public CANCEL {
-                    required phase: String
-                    required current: usize
-                    optional total: usize
-                    required elapsed_seconds: f64
+                /// Report absolute aggregate snapshot download progress
+                public DOWNLOAD {
+                    required downloaded_bytes: u64
+                    required completed_snapshots: usize
                 }
-                /// Complete a long-running bootstrap phase
+                /// Report successful bootstrap completion
                 public COMPLETE {
-                    required phase: String
-                    required current: usize
-                    optional total: usize
-                    required elapsed_seconds: f64
+                    required epoch: amaru_kernel::Epoch
+                    required point: String
                 }
             }
             proposals {
@@ -1588,6 +1645,34 @@ define_schemas! {
             }
         }
         mithril {
+            progress {
+                /// Mithril synchronization entered a new stage
+                public STAGE {
+                    required stage: String
+                }
+                /// Selected the applicable Mithril snapshot
+                public SNAPSHOT {
+                    required hash: String
+                    required through_chunk: u64
+                }
+                /// Absolute Mithril database download progress
+                public DOWNLOAD {
+                    required downloaded_bytes: u64
+                    required completed_files: u64
+                    required total_files: u64
+                    optional total_bytes: u64
+                }
+                /// Absolute block ingestion progress
+                public INGEST {
+                    required blocks: u64
+                    required point: amaru_kernel::Point
+                }
+                /// Mithril synchronization completed successfully
+                public COMPLETE {
+                    required point: amaru_kernel::Point
+                    required processed_blocks: u64
+                }
+            }
             snapshot {
                 /// Fetch and verify a Mithril snapshot
                 public FETCH {
@@ -1969,10 +2054,6 @@ define_schemas! {
                     public CONNECT_DISCARDED {
                         required peer: %amaru_kernel::Peer
                         required reason: String
-                    }
-                    /// A peer is dropped after exhausting its connection attempts
-                    public CONNECT_EXHAUSTED {
-                        required peer: %amaru_kernel::Peer
                     }
                     /// An outbound connection to a peer was established
                     public CONNECTED {
@@ -2660,6 +2741,12 @@ define_schemas! {
                 /// Opened the ledger state; reports the ledger tip at startup
                 public LEDGER_OPENED {
                     required tip: amaru_kernel::Point
+                }
+                /// Block forging is configured from key files.
+                public FORGING {
+                    required pool_id: amaru_kernel::PoolId
+                    required sequence: u64
+                    required kes_period: %amaru_kernel::KesPeriod
                 }
                 /// Failed to notify the peer tracker of a stake distribution update
                 public STAKE_DIST_NOTIFY_FAILED {}

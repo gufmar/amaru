@@ -463,6 +463,10 @@ fn test_block_validation_result_valid() {
         Level::DEBUG,
         &["chain.select_from_block_validation", "chain.block_validated", "advanced=1"],
     )
+    .assert_and_remove(
+        Level::DEBUG,
+        &["amaru::blockperf", "block.adopted", &format!(r#"header_hash="{}""#, tip.hash())],
+    )
     .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
 }
 
@@ -953,6 +957,10 @@ fn test_invalid_block_validation_result_invalidates_best_tip_and_trims_the_branc
             Level::DEBUG,
             &["chain.select_from_block_validation", "advanced=1", "syncing=false", "valid=true"],
         )
+        .assert_and_remove(
+            Level::DEBUG,
+            &["amaru::blockperf", "block.adopted", &format!(r#"header_hash="{}""#, prep.headers.h2.hash())],
+        )
         .assert_and_remove(Level::DEBUG, &["best_tip_candidate.search"])
         .assert_and_remove(Level::DEBUG, &["best_tip_candidate.search", "visited=4", "visited=4"])
         .assert_and_remove(
@@ -1084,7 +1092,7 @@ mod cmp_tip_unit_tests {
     use std::cmp::Ordering;
 
     use amaru_kernel::{
-        Bytes, Hasher, Header, HeaderBody, HeaderHash, OperationalCert, ProtocolVersion, VrfCert,
+        Bytes, Hasher, Header, HeaderBody, HeaderHash, KesPeriod, OperationalCert, ProtocolVersion, VrfCert,
         cardano::fixed_bytes::FixedBytes, size::BLOCK_BODY, to_cbor,
     };
 
@@ -1109,7 +1117,7 @@ mod cmp_tip_unit_tests {
                 operational_cert: OperationalCert {
                     operational_cert_hot_verification_key: FixedBytes::zeroes(),
                     operational_cert_sequence_number: op_cert_seq,
-                    operational_cert_kes_period: 0,
+                    operational_cert_kes_period: KesPeriod::from(0),
                     operational_cert_sigma: FixedBytes::zeroes(),
                 },
                 protocol_version: ProtocolVersion::new(1, 2),
