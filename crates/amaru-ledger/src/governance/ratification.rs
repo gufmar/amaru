@@ -224,6 +224,7 @@ impl<'distr> RatificationContext<'distr> {
 
     fn new_enact_span(id: &ProposalId, proposal: &ProposalEnum) -> Span {
         info_span!(ledger::governance::ENACTING, proposal_id = id.to_string(), proposal_kind = proposal.display_kind())
+            .into()
     }
 
     fn new_ratify_span(id: &ProposalId, proposal: &ProposalEnum) -> Span {
@@ -232,6 +233,7 @@ impl<'distr> RatificationContext<'distr> {
             proposal_id = id.to_string(),
             proposal_kind = proposal.display_kind()
         )
+        .into()
     }
 
     fn is_accepted_by_everyone(
@@ -416,8 +418,8 @@ mod tests {
 
         use amaru_kernel::{
             GovernanceAction, Hash, PREPROD_DEFAULT_PROTOCOL_PARAMETERS, ProposalId, ProposalPointer, ProposalsRootsRc,
-            ProtocolParamUpdate, ProtocolVersion, RatificationStatus, RationalNumber, TransactionPointer,
-            any_proposal_pointer, safe_ratio, utils::tests::assert_strategy_sometimes_fails,
+            ProtocolParamUpdate, ProtocolVersion, RatificationStatus, TransactionPointer, UnitRationalNumber,
+            safe_ratio, utils::tests::assert_strategy_sometimes_fails,
         };
         use proptest::{prelude::*, test_runner::RngSeed};
 
@@ -457,7 +459,7 @@ mod tests {
         }
 
         fn ratification_context(distribution: &StakeDistribution) -> RatificationContext<'_> {
-            let zero = RationalNumber { numerator: 0, denominator: 1 };
+            let zero = UnitRationalNumber::zero();
             let mut protocol_parameters = PREPROD_DEFAULT_PROTOCOL_PARAMETERS.clone();
             protocol_parameters.min_committee_size = 0;
             protocol_parameters.pool_voting_thresholds.hard_fork_initiation = zero;
@@ -483,7 +485,7 @@ mod tests {
             let mut ctx = ratification_context(&distribution);
             let lowered_thresholds = ctx.protocol_parameters.drep_voting_thresholds.clone();
             ctx.protocol_parameters.drep_voting_thresholds.hard_fork_initiation =
-                RationalNumber { numerator: 1, denominator: 1 };
+                UnitRationalNumber::new(1, 1).unwrap();
 
             let (roots, pruned_proposals) = ctx
                 .ratify_proposals(
@@ -555,7 +557,7 @@ mod tests {
 
         proptest! {
             #[test]
-            fn prop_era_history_yields_within_epoch_bounds(pointer in any_proposal_pointer(u64::MAX)) {
+            fn prop_era_history_yields_within_epoch_bounds(pointer in any::<ProposalPointer>()) {
                 let epoch = ERA_HISTORY.slot_to_epoch(pointer.slot(), pointer.slot()).unwrap();
                 prop_assert!(
                     epoch >= Epoch::from(MIN_ARBITRARY_EPOCH) && epoch <= Epoch::from(MAX_ARBITRARY_EPOCH),
@@ -567,7 +569,7 @@ mod tests {
         #[test]
         fn prop_proposal_pointer_sometimes_min_epoch() {
             assert_strategy_sometimes_fails(
-                any_proposal_pointer(u64::MAX),
+                any::<ProposalPointer>(),
                 ProptestConfig { rng_seed: RngSeed::Fixed(42), ..ProptestConfig::default() },
                 |pointer| {
                     let epoch = ERA_HISTORY.slot_to_epoch(pointer.slot(), pointer.slot()).unwrap();
@@ -580,7 +582,7 @@ mod tests {
         #[test]
         fn prop_proposal_pointer_sometimes_max_epoch() {
             assert_strategy_sometimes_fails(
-                any_proposal_pointer(u64::MAX),
+                any::<ProposalPointer>(),
                 ProptestConfig { rng_seed: RngSeed::Fixed(42), ..ProptestConfig::default() },
                 |pointer| {
                     let epoch = ERA_HISTORY.slot_to_epoch(pointer.slot(), pointer.slot()).unwrap();

@@ -16,7 +16,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use amaru_kernel::{ConsensusParameters, EraHistory, Header, PeerCandidate, Point, Transaction};
 use amaru_metrics::ledger::LedgerMetrics;
-use amaru_observability::TraceContext;
+use amaru_observability::{AttachedSpan, NoParent, TraceContext, amaru::consensus::block::VALIDATE};
 use amaru_ouroboros_traits::{
     BlockValidationError, CanValidateBlocks, CanValidateTxs, FindCommonAncestorResult, ForkSwitchOutcome,
     HasStakePools, Nonces, PoolSummaries, TransactionValidationError,
@@ -60,41 +60,60 @@ pub trait LedgerOps: Send + Sync {
 }
 
 /// Implementation of LedgerOps using amaru_pure_stage::Effects.
+///
+/// `S` is the span the context was taken from. Header validation only attaches
+/// that context. Block validation and fork switches record [`VALIDATE`].
 #[derive(Clone, Debug)]
-pub struct Ledger {
+pub struct Ledger<S = NoParent> {
     effects: Effects<Void>,
-    trace_context: TraceContext,
+    trace_context: TraceContext<S>,
 }
 
-impl Ledger {
+impl Ledger<NoParent> {
     pub fn new<T: SendData>(effects: Effects<T>) -> Self {
-        Self { effects: effects.erase(), trace_context: Default::default() }
-    }
-
-    pub fn with_trace_context(mut self, trace_context: &TraceContext) -> Self {
-        self.trace_context = trace_context.clone();
-        self
+        Self { effects: effects.erase(), trace_context: TraceContext::none() }
     }
 }
 
-impl LedgerOps for Ledger {
-    fn validate_tx(&self, tx: &Transaction) -> BoxFuture<'_, Result<(), TransactionValidationError>> {
-        self.effects.external(ValidateTxEffect::new(tx))
+impl<S> Ledger<S> {
+    pub fn with_trace_context<P>(self, trace_context: &TraceContext<P>) -> Ledger<P> {
+        Ledger { effects: self.effects, trace_context: trace_context.clone() }
     }
+}
 
-    fn validate_header(&self, header: &Header) -> BoxFuture<'static, Result<Nonces, ValidateHeaderError>> {
-        self.effects.external(ValidateHeaderEffect::new(header).with_trace_context(&self.trace_context))
-    }
-
-    fn validate_block(
+impl Ledger<VALIDATE> {
+    pub fn validate_block(
         &self,
         point: &Point,
     ) -> BoxFuture<'static, Result<Result<LedgerMetrics, BlockValidationError>, BlockValidationError>> {
         self.effects.external(ValidateBlockEffect::new(point).with_trace_context(&self.trace_context))
     }
 
-    fn switch_to_fork(&self, tip: &Point) -> BoxFuture<'static, Result<ForkSwitchOutcome, BlockValidationError>> {
+    pub fn switch_to_fork(&self, tip: &Point) -> BoxFuture<'static, Result<ForkSwitchOutcome, BlockValidationError>> {
         self.effects.external(SwitchToForkEffect::new(tip).with_trace_context(&self.trace_context))
+    }
+}
+
+impl<S: Send + Sync + 'static> LedgerOps for Ledger<S> {
+    fn validate_tx(&self, tx: &Transaction) -> BoxFuture<'_, Result<(), TransactionValidationError>> {
+        self.effects.external(ValidateTxEffect::new(tx))
+    }
+
+    fn validate_header(&self, header: &Header) -> BoxFuture<'static, Result<Nonces, ValidateHeaderError>> {
+        self.effects.external(ValidateHeaderEffect::new(header).with_trace_context(&self.trace_context.for_attach()))
+    }
+
+    fn validate_block(
+        &self,
+        point: &Point,
+    ) -> BoxFuture<'static, Result<Result<LedgerMetrics, BlockValidationError>, BlockValidationError>> {
+        // `Ledger<VALIDATE>` shadows this with an inherent method that records that span.
+        // Other ledgers do not carry a block-validation context.
+        self.effects.external(ValidateBlockEffect::new(point))
+    }
+
+    fn switch_to_fork(&self, tip: &Point) -> BoxFuture<'static, Result<ForkSwitchOutcome, BlockValidationError>> {
+        self.effects.external(SwitchToForkEffect::new(tip))
     }
 
     fn immutable_tip(&self) -> BoxFuture<'static, Point> {
@@ -155,15 +174,15 @@ impl ExternalEffectAPI for ValidateTxEffect {
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ValidateBlockEffect {
     point: Point,
-    trace_context: TraceContext,
+    trace_context: TraceContext<VALIDATE>,
 }
 
 impl ValidateBlockEffect {
     pub fn new(point: &Point) -> Self {
-        Self { point: *point, trace_context: Default::default() }
+        Self { point: *point, trace_context: TraceContext::detached() }
     }
 
-    pub fn with_trace_context(mut self, trace_context: &TraceContext) -> Self {
+    pub fn with_trace_context(mut self, trace_context: &TraceContext<VALIDATE>) -> Self {
         self.trace_context = trace_context.clone();
         self
     }
@@ -171,6 +190,8 @@ impl ValidateBlockEffect {
 
 impl ExternalEffectAPI for ValidateBlockEffect {
     type Response = Result<Result<LedgerMetrics, BlockValidationError>, BlockValidationError>;
+    const SIMULATED_DURATION: amaru_pure_stage::DurationDist =
+        crate::effect_timings::effects__ledger_effects__ValidateBlockEffect;
 
     #[expect(clippy::expect_used)]
     fn run(self: Box<Self>, resources: Resources) -> BoxFuture<'static, Box<dyn SendData>> {
@@ -201,19 +222,20 @@ impl ExternalEffectAPI for ValidateBlockEffect {
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ValidateHeaderEffect {
     header: Header,
-    trace_context: TraceContext,
+    trace_context: TraceContext<AttachedSpan>,
 }
 
 impl ValidateHeaderEffect {
     pub fn new(header: &Header) -> Self {
-        Self { header: header.clone(), trace_context: Default::default() }
+        Self { header: header.clone(), trace_context: TraceContext::detached() }
     }
 
     pub fn header(&self) -> &Header {
         &self.header
     }
 
-    pub fn with_trace_context(mut self, trace_context: &TraceContext) -> Self {
+    /// Accepts the caller's span. Header checks attach that context and do not open a child of it.
+    pub fn with_trace_context(mut self, trace_context: &TraceContext<AttachedSpan>) -> Self {
         self.trace_context = trace_context.clone();
         self
     }
@@ -221,6 +243,8 @@ impl ValidateHeaderEffect {
 
 impl ExternalEffectAPI for ValidateHeaderEffect {
     type Response = Result<Nonces, ValidateHeaderError>;
+    const SIMULATED_DURATION: amaru_pure_stage::DurationDist =
+        crate::effect_timings::effects__ledger_effects__ValidateHeaderEffect;
 
     #[expect(clippy::expect_used)]
     fn run(self: Box<Self>, resources: Resources) -> BoxFuture<'static, Box<dyn SendData>> {
@@ -258,15 +282,15 @@ impl ExternalEffectAPI for ValidateHeaderEffect {
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SwitchToForkEffect {
     tip: Point,
-    trace_context: TraceContext,
+    trace_context: TraceContext<VALIDATE>,
 }
 
 impl SwitchToForkEffect {
     pub fn new(tip: &Point) -> Self {
-        Self { tip: *tip, trace_context: Default::default() }
+        Self { tip: *tip, trace_context: TraceContext::detached() }
     }
 
-    pub fn with_trace_context(mut self, trace_context: &TraceContext) -> Self {
+    pub fn with_trace_context(mut self, trace_context: &TraceContext<VALIDATE>) -> Self {
         self.trace_context = trace_context.clone();
         self
     }
@@ -274,6 +298,8 @@ impl SwitchToForkEffect {
 
 impl ExternalEffectAPI for SwitchToForkEffect {
     type Response = Result<ForkSwitchOutcome, BlockValidationError>;
+    const SIMULATED_DURATION: amaru_pure_stage::DurationDist =
+        crate::effect_timings::effects__ledger_effects__SwitchToForkEffect;
 
     #[expect(clippy::expect_used)]
     fn run(self: Box<Self>, resources: Resources) -> BoxFuture<'static, Box<dyn SendData>> {
@@ -338,6 +364,8 @@ pub struct VolatileTipEffect;
 
 impl ExternalEffectAPI for VolatileTipEffect {
     type Response = Point;
+    const SIMULATED_DURATION: amaru_pure_stage::DurationDist =
+        crate::effect_timings::effects__ledger_effects__VolatileTipEffect;
 
     #[expect(clippy::expect_used)]
     fn run(self: Box<Self>, resources: Resources) -> BoxFuture<'static, Box<dyn SendData>> {
@@ -359,6 +387,8 @@ pub struct RegisteredRelayCandidatesEffect;
 
 impl ExternalEffectAPI for RegisteredRelayCandidatesEffect {
     type Response = Result<BTreeSet<PeerCandidate>, BlockValidationError>;
+    const SIMULATED_DURATION: amaru_pure_stage::DurationDist =
+        crate::effect_timings::effects__ledger_effects__RegisteredRelayCandidatesEffect;
 
     #[expect(clippy::expect_used)]
     fn run(self: Box<Self>, resources: Resources) -> BoxFuture<'static, Box<dyn SendData>> {

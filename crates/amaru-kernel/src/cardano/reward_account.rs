@@ -14,6 +14,8 @@
 
 use std::{collections::BTreeMap, fmt};
 
+#[cfg(any(test, feature = "test-utils"))]
+use proptest::prelude::{Arbitrary, BoxedStrategy, Strategy, any};
 use thiserror::Error;
 
 use crate::{Address, AsHash, Credential, Lovelace, Network, NonEmptyKeyValuePairs, bech32, cbor};
@@ -135,8 +137,20 @@ impl<C> cbor::Encode<C> for RewardAccount {
 impl<'d, C: cbor::HasProtocolVersion> cbor::Decode<'d, C> for RewardAccount {
     fn decode(d: &mut cbor::Decoder<'d>, ctx: &mut C) -> Result<Self, cbor::decode::Error> {
         let position = d.position();
-        let bytes = cbor::decode_bytes_v12_indefinite(d, ctx)?;
+        let bytes = cbor::decode_bytes_v12(d, ctx)?;
         Self::try_from(bytes.as_ref()).map_err(|e| cbor::decode::Error::message(e.to_string()).at(position))
+    }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl Arbitrary for RewardAccount {
+    type Parameters = ();
+    type Strategy = BoxedStrategy<Self>;
+
+    fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
+        (any::<Network>(), any::<Credential>())
+            .prop_map(|(network, credential)| RewardAccount::new(network, credential))
+            .boxed()
     }
 }
 
@@ -165,34 +179,15 @@ impl From<&NonEmptyKeyValuePairs<RewardAccount, Lovelace>> for PlutusWithdrawals
     }
 }
 
-#[cfg(any(test, feature = "test-utils"))]
-pub use tests::*;
-
-#[cfg(any(test, feature = "test-utils"))]
-mod tests {
-    use proptest::prop_compose;
-
-    use crate::{RewardAccount, any_credential, any_network};
-
-    prop_compose! {
-        pub fn any_reward_account()(
-            network in any_network(),
-            credential in any_credential(),
-        ) -> RewardAccount {
-            RewardAccount::new(network, credential)
-        }
-    }
-}
-
 #[cfg(test)]
-mod unit_tests {
+mod tests {
     use proptest::prelude::*;
     use test_case::test_case;
 
-    use super::{RewardAccount, any_reward_account};
+    use super::RewardAccount;
     use crate::{Credential, cbor, prop_cbor_roundtrip, protocol_version};
 
-    prop_cbor_roundtrip!(RewardAccount, any_reward_account());
+    prop_cbor_roundtrip!(RewardAccount);
 
     fn decode(bytes: &[u8]) -> Result<RewardAccount, cbor::decode::Error> {
         let mut ctx = protocol_version::MINIMUM_SUPPORTED;
@@ -228,7 +223,7 @@ mod unit_tests {
     /// [Aiken reference implementation](https://github.com/aiken-lang/aiken/blob/a8c032935dbaf4a1140e9d8be5c270acd32c9e8c/crates/uplc/src/tx/script_context.rs#L1112)
     #[test]
     fn proptest_reward_account_ordering() {
-        proptest!(|(accounts in prop::collection::vec(any_reward_account(), 20..100))| {
+        proptest!(|(accounts in prop::collection::vec(any::<RewardAccount>(), 20..100))| {
             let mut sorted = accounts.clone();
             sorted.sort();
 

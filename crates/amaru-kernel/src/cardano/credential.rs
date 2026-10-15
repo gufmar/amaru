@@ -14,9 +14,12 @@
 
 use std::fmt;
 
+#[cfg(any(test, feature = "test-utils"))]
+use proptest::prelude::{Arbitrary, BoxedStrategy, Strategy, any, prop_oneof};
+
 use crate::{
     AddressType, Hash, cbor,
-    size::{CREDENTIAL, KEY, SCRIPT},
+    size::{KEY, SCRIPT},
 };
 
 // NOTE: Credential variant order
@@ -44,10 +47,8 @@ impl Credential {
     pub fn from_raw_address(bytes: &[u8]) -> Option<Self> {
         use AddressType::*;
         match AddressType::try_from_header_byte(*bytes.first()?)? {
-            Type0 | Type1 => (bytes.len() == 2 * CREDENTIAL + 1).then(|| Self::KeyHash(Hash::from(&bytes[KEY + 1..]))),
-            Type2 | Type3 => {
-                (bytes.len() == 2 * CREDENTIAL + 1).then(|| Self::ScriptHash(Hash::from(&bytes[SCRIPT + 1..])))
-            }
+            Type0 | Type1 => bytes.get(KEY + 1..).and_then(|h| Hash::try_from(h).ok()).map(Self::KeyHash),
+            Type2 | Type3 => bytes.get(SCRIPT + 1..).and_then(|h| Hash::try_from(h).ok()).map(Self::ScriptHash),
             Type4 | Type5 | Type6 | Type7 | Type8 | Type14 | Type15 => None,
         }
     }
@@ -127,18 +128,15 @@ impl From<BorrowedCredential<'_>> for Credential {
 }
 
 #[cfg(any(test, feature = "test-utils"))]
-pub use tests::*;
+impl Arbitrary for Credential {
+    type Parameters = ();
+    type Strategy = BoxedStrategy<Self>;
 
-#[cfg(any(test, feature = "test-utils"))]
-mod tests {
-    use proptest::prelude::*;
-
-    use crate::{Credential, Hash};
-
-    pub fn any_credential() -> impl Strategy<Value = Credential> {
+    fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
         prop_oneof![
-            any::<[u8; 28]>().prop_map(|hash| Credential::KeyHash(Hash::new(hash))),
-            any::<[u8; 28]>().prop_map(|hash| Credential::ScriptHash(Hash::new(hash))),
+            any::<Hash<KEY>>().prop_map(Credential::KeyHash),
+            any::<Hash<SCRIPT>>().prop_map(Credential::ScriptHash),
         ]
+        .boxed()
     }
 }

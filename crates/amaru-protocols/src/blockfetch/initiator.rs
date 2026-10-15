@@ -24,7 +24,7 @@ use std::{
 };
 
 use amaru_kernel::{NetworkPoint, Peer, Point, RawBlock, cardano::network_block::NetworkBlock, utils::debug_bytes};
-use amaru_observability::error;
+use amaru_observability::{error, warn};
 use amaru_pure_stage::{
     DeserializerGuards, Effects, StageRef, define_role, define_role_tag, make_states, on_receive, typestate::prelude::*,
 };
@@ -50,6 +50,16 @@ pub fn blockfetch_pipeline_max_buffer(n: NonZeroU8) -> usize {
     usize::from(n.get()).saturating_mul(MAX_FETCHED_BLOCKS).saturating_mul(BLOCKFETCH_MAX_BLOCK_WIRE_BYTES)
 }
 
+/// Bulk mailbox of the block-fetch handler for pipeline depth `n`.
+///
+/// One local request and one network message per slot, plus `Registered`,
+/// `Close`, and the one stashed newer range. The default bulk mailbox is 10,
+/// and `n = 2` stays inside it.
+pub fn blockfetch_handler_mailbox(n: NonZeroU8) -> usize {
+    const BULK_MAILBOX: usize = 10;
+    BULK_MAILBOX.max(2 * usize::from(n.get()) + 4)
+}
+
 fn pipeline_slots(n: NonZeroU8) -> NonZeroUsize {
     match NonZeroUsize::new(usize::from(n.get())) {
         Some(n) => n,
@@ -66,7 +76,7 @@ define_role!(CollectorOut, ToCollector, Blocks);
 
 on_receive!(Idle as PipelineIdleIn {
     Fetch => { Call<ToResponder, RequestRange> => Busy }
-    Close => { Call<ToResponder, ClientDone> | Repeat<SendAny<ToCollector>> => Done }
+    Close => { Call<ToResponder, ClientDone> | Repeat<SendAny<ToCollector>> | Terminate => Done }
 });
 on_receive!(Busy as ClientBusyIn {
     Pull => { Send<ToMux, WantNext>, SetTimeout => Busy }
@@ -142,8 +152,9 @@ where
     type Reply = Sent;
     const TIMEOUT: Duration = NETWORK_SEND_TIMEOUT;
 
-    fn encode(&self, msg: T, reply: StageRef<Sent>) -> MuxMessage {
-        self.encode_send(Message::from(msg), reply)
+    fn into_call(self, msg: T) -> (Duration, impl FnOnce(StageRef<Sent>) -> MuxMessage + std::marker::Send + 'static) {
+        let message = Message::from(msg);
+        (NETWORK_SEND_TIMEOUT, move |reply| self.encode_send(message, reply))
     }
 }
 
@@ -266,10 +277,8 @@ async fn instance(inst: Instance, mail: Mail, eff: Effects<Mail>) -> Instance {
                 s.finish().into()
             }
             Ok(PipelineIdleIn::Close(close)) => {
-                inflight = None;
-                pending_close = false;
                 let (_, s) = idle.receive(&close, eff).call(&mux, ClientDone).await;
-                s.finish().into()
+                s.terminate().await;
             }
             // TODO: handle timeouts generically to make mistakes impossible
             Err(Inputs::Internal(Internal::Timeout)) => idle.into(),
@@ -309,6 +318,7 @@ async fn instance(inst: Instance, mail: Mail, eff: Effects<Mail>) -> Instance {
                 pending_close = true;
                 busy.into()
             }
+            Err(Inputs::Internal(Internal::Timeout)) => return timed_out(peer, busy.name(), eff).await,
             Err(mail) => match Fetch::from_mailbox(mail) {
                 Ok(fetch) => {
                     pending_fetch = Some(fetch);
@@ -360,6 +370,7 @@ async fn instance(inst: Instance, mail: Mail, eff: Effects<Mail>) -> Instance {
                 pending_close = true;
                 streaming.into()
             }
+            Err(Inputs::Internal(Internal::Timeout)) => return timed_out(peer, streaming.name(), eff).await,
             Err(mail) => match Fetch::from_mailbox(mail) {
                 Ok(fetch) => {
                     pending_fetch = Some(fetch);
@@ -377,10 +388,8 @@ async fn instance(inst: Instance, mail: Mail, eff: Effects<Mail>) -> Instance {
     };
     let proto = match (pending_close, pending_fetch.take(), proto) {
         (true, _, Proto::Idle(idle)) => {
-            pending_close = false;
-            inflight = None;
             let (_, s) = idle.receive(&Close, follow_eff).call(&mux, ClientDone).await;
-            s.finish().into()
+            s.terminate().await;
         }
         (false, Some(fetch), Proto::Idle(idle)) => {
             let range = RequestRange { from: fetch.from, through: fetch.through };
@@ -401,6 +410,11 @@ async fn instance(inst: Instance, mail: Mail, eff: Effects<Mail>) -> Instance {
         }
     };
     Instance { proto, mux, inflight, peer, pending_close, pending_fetch }
+}
+
+async fn timed_out(peer: Peer, state: &str, eff: Effects<Mail>) -> Instance {
+    warn!(protocols::TIMEOUT, proto = "block_fetch", peer, state);
+    eff.terminate().await
 }
 
 async fn invalid(peer: Peer, state: &str, input: impl std::fmt::Debug, eff: Effects<Mail>) -> Instance {
@@ -436,13 +450,14 @@ pub async fn register_blockfetch_initiator<M: amaru_pure_stage::SendData>(
     eff: &Effects<M>,
     tombstone: M,
 ) -> StageRef<BlockFetchMessage> {
+    let mailbox = blockfetch_handler_mailbox(n);
     let blockfetch = if n.get() == 1 {
         let mux = MuxClient::new(muxer.clone(), PROTO_N2N_BLOCK_FETCH.erase());
-        let blockfetch = eff.stage("blockfetch", lock_step).await;
+        let blockfetch = eff.stage_with_mailbox_size("blockfetch", lock_step, mailbox).await;
         let blockfetch = eff.supervise(blockfetch, tombstone);
         eff.wire_up(blockfetch, Instance::new(mux, peer)).await
     } else {
-        let blockfetch = eff.stage("blockfetch", handler).await;
+        let blockfetch = eff.stage_with_mailbox_size("blockfetch", handler, mailbox).await;
         let blockfetch = eff.supervise(blockfetch, tombstone);
         eff.wire_up(blockfetch, Handler::for_peer(n, muxer.clone(), peer)).await
     };
@@ -466,7 +481,7 @@ mod tests {
 
     use amaru_kernel::{NonEmptyBytes, Point, cbor};
     use amaru_pure_stage::{
-        StageGraph,
+        Effect, StageGraph,
         simulation::{Run, SimulationBuilder},
     };
     use tokio::runtime::{Builder, Runtime};
@@ -671,7 +686,7 @@ mod tests {
             )
             .unwrap();
         let mut running = network.run(test_runtime());
-        running.run(Run::skip_wakeups()).assert_idle();
+        running.run(Run::skip_wakeups()).assert_terminated("bf");
         let log = running.get_state(&mux).cloned().unwrap();
         assert_eq!(log.sends, vec!["ClientDone"]);
         assert_eq!(log.wants, 0);
@@ -840,5 +855,36 @@ mod tests {
         running.run(Run::skip_wakeups()).assert_idle();
         running.enqueue_msg(&handler, [Inputs::Internal(Internal::Timeout)]);
         running.run(Run::skip_wakeups()).assert_idle();
+    }
+
+    #[test]
+    fn blockfetch_handler_mailbox_is_max_10_or_2n_plus_4() {
+        let cases = [(1u8, 10usize), (2, 10), (4, 12)];
+        for (n, expected) in cases {
+            let depth = NonZeroU8::new(n).unwrap();
+            assert_eq!(blockfetch_handler_mailbox(depth), expected);
+
+            let mut network = SimulationBuilder::default();
+            let boot = network.stage("boot", async |_state: u8, depth: u8, eff: Effects<u8>| {
+                let mux = eff.stage("mux", async |s: u8, _msg: MuxMessage, _eff: Effects<MuxMessage>| s).await;
+                let mux = eff.wire_up(mux, 0u8).await;
+                let depth = NonZeroU8::new(depth).unwrap();
+                let _handler = register_blockfetch_initiator(&mux, Peer::for_test(1), depth, &eff, 0u8).await;
+                0
+            });
+            let boot = network.wire_up(boot, 0u8);
+            let mut running = network.run(test_runtime());
+            running.breakpoint(
+                "bf-mail",
+                |eff| matches!(eff, Effect::WireStage { name, .. } if name.as_str().starts_with("blockfetch")),
+            );
+            running.enqueue_msg(&boot, [n]);
+            running.run(Run::default()).assert_breakpoint("bf-mail");
+            let hit = running.breakpoint_effect();
+            let Effect::WireStage { mailbox_size, .. } = hit.effect() else {
+                panic!("expected the block-fetch handler to be wired");
+            };
+            assert_eq!(*mailbox_size, expected, "N={n}");
+        }
     }
 }

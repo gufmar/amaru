@@ -36,7 +36,7 @@ use amaru_ledger::{
     store::{Columns, Store, TransactionalContext},
 };
 use amaru_observability::info;
-use amaru_progress_bar::ProgressBarFactory;
+use amaru_progress_bar::{ProgressBarExt, ProgressBarFactory};
 use anyhow::anyhow;
 
 use super::{extract_snapshot_chain_state_after_ledger, mempack, parse_state_snapshot_prefix};
@@ -235,8 +235,9 @@ where
         }
     }
 
-    progress.finish();
-    info!(bootstrap::import::UTXO, size = actual_size);
+    progress.finish(|| {
+        info!(bootstrap::import::UTXO, size = actual_size);
+    });
 
     Ok(())
 }
@@ -247,7 +248,8 @@ fn decode_tvar_entry(input: &[u8], output: &[u8]) -> anyhow::Result<(Transaction
     }
 
     let input = TransactionInput {
-        transaction_id: Hash::from(&input[..32]),
+        transaction_id: Hash::try_from(&input[..32])
+            .unwrap_or_else(|_| unreachable!("the key length is checked above")),
         index: u16::from_be_bytes([input[32], input[33]]),
     };
     let output = mempack::decode_transaction_output(output)?;

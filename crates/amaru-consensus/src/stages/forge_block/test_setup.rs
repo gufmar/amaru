@@ -96,12 +96,13 @@ pub fn setup(
     setup_msgs(prep, [msg])
 }
 
-/// Drive `msg` until the stage next sleeps on a timer, without firing that timer.
+/// Drive `msg` through sampled effect durations until the stage sleeps on its own
+/// timer, without firing that timer.
 pub fn setup_until_sleeping(
     prep: &TestPrep,
     msg: ForgeBlockMsg,
 ) -> (SimulationRunning, DeserializerGuards, Logs, StageStateRef<ForgeBlockMsg, ForgeBlock>) {
-    setup_with(prep, [msg], SimulationRunMode::UntilSleeping)
+    setup_with(prep, [msg], SimulationRunMode::UntilStageTimer)
 }
 
 pub fn setup_msgs(
@@ -132,6 +133,9 @@ fn setup_with(
         },
         |resources| {
             resources.put::<ResourceHeaderStore>(prep.store.clone());
+            resources.put::<crate::performance::ResourcePerformance>(std::sync::Arc::new(
+                crate::performance::Performance::new(),
+            ));
             let credentials = prep.credentials.clone().map(|credentials| credentials as Arc<dyn ForgingCredentials>);
             resources.put::<ResourceForgingCredentials>(credentials);
         },

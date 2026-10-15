@@ -325,9 +325,7 @@ impl<'b, C: cbor::HasProtocolVersion> cbor::decode::Decode<'b, C> for PlutusData
 // BoundedBytes
 // ---------------------------------------------------------------------------------------------
 
-/// Largest byte string accepted inside Plutus data, whether as a definite-length
-/// string or as a single chunk of an indefinite-length one.
-pub const MAX_BOUNDED_BYTES_CHUNK: usize = 64;
+pub use amaru_minicbor_extra::MAX_BOUNDED_BYTES_CHUNK;
 
 /// Decode a Plutus data byte string, accepting both the definite-length form and the
 /// indefinite-length (chunked) form as long as no piece exceeds [`MAX_BOUNDED_BYTES_CHUNK`].
@@ -335,12 +333,7 @@ pub fn decode_bounded_bytes(d: &mut cbor::Decoder<'_>) -> Result<Bytes, cbor::de
     let mut bytes = Vec::new();
     for chunk in d.bytes_iter()? {
         let chunk = chunk?;
-        if chunk.len() > MAX_BOUNDED_BYTES_CHUNK {
-            return Err(cbor::decode::Error::message(format!(
-                "plutus data byte string of {} bytes exceeds the {MAX_BOUNDED_BYTES_CHUNK}-byte limit",
-                chunk.len()
-            )));
-        }
+        amaru_minicbor_extra::assert_bounded_chunk(chunk)?;
         bytes.extend_from_slice(chunk);
     }
     Ok(Bytes::from(bytes))
@@ -430,7 +423,7 @@ mod variable_encoding_plutus_data {
     use super::PlutusData;
     use crate::{
         Bytes, MemoizedPlutusData, cbor,
-        plutus_data::{BigInt, Constr, VariableEncodingConstr, any_bigint, any_bounded_bytes},
+        plutus_data::{BigInt, Constr, VariableEncodingConstr, any_bounded_bytes},
         utils::cbor::{CborArray, CborMap},
     };
 
@@ -512,7 +505,7 @@ mod variable_encoding_plutus_data {
 
     impl VariableEncodingPlutusData {
         pub fn any(depth: u8) -> impl Strategy<Value = Self> {
-            let int = any_bigint().prop_map(Self::BigInt);
+            let int = any::<BigInt>().prop_map(Self::BigInt);
 
             let bytes = any_bounded_bytes().prop_map(Self::BoundedBytes);
 
@@ -571,34 +564,39 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::plutus_data::{any_bigint, any_constr};
+    use crate::Depth;
 
     pub fn any_bounded_bytes() -> impl Strategy<Value = Bytes> {
         any::<Vec<u8>>().prop_map(Bytes::from)
     }
 
-    pub fn any_memoized_plutus_data(depth: u8) -> impl Strategy<Value = MemoizedPlutusData> {
-        any_plutus_data(depth).prop_map(MemoizedPlutusData::new)
+    impl Arbitrary for MemoizedPlutusData {
+        type Parameters = Depth;
+        type Strategy = BoxedStrategy<Self>;
+
+        fn arbitrary_with(depth: Self::Parameters) -> Self::Strategy {
+            any_with::<PlutusData>(depth).prop_map(MemoizedPlutusData::new).boxed()
+        }
     }
 
-    pub fn any_plutus_data(depth: u8) -> impl Strategy<Value = PlutusData> {
-        let int = any_bigint().prop_map(PlutusData::int);
+    impl Arbitrary for PlutusData {
+        type Parameters = Depth;
+        type Strategy = BoxedStrategy<Self>;
 
-        let bytes = any_bounded_bytes().prop_map(Vec::from).prop_map(PlutusData::bytes);
+        fn arbitrary_with(Depth(depth): Self::Parameters) -> Self::Strategy {
+            let int = any::<BigInt>().prop_map(PlutusData::int);
+            let bytes = any_bounded_bytes().prop_map(Vec::from).prop_map(PlutusData::bytes);
 
-        if depth > 0 {
-            let constr = any_constr(depth).prop_map(PlutusData::constr);
+            if depth == 0 {
+                return prop_oneof![int, bytes].boxed();
+            }
 
-            let array =
-                prop::collection::vec(any_plutus_data(depth - 1), 0..depth as usize).prop_map(PlutusData::array);
-
-            let map =
-                prop::collection::vec((any_plutus_data(depth - 1), any_plutus_data(depth - 1)), 0..depth as usize)
-                    .prop_map(PlutusData::map);
+            let any_child = || any_with::<PlutusData>(Depth(depth - 1));
+            let constr = any_with::<Constr<PlutusData>>(Depth(depth)).prop_map(PlutusData::constr);
+            let array = prop::collection::vec(any_child(), 0..depth as usize).prop_map(PlutusData::array);
+            let map = prop::collection::vec((any_child(), any_child()), 0..depth as usize).prop_map(PlutusData::map);
 
             prop_oneof![int, bytes, constr, array, map].boxed()
-        } else {
-            prop_oneof![int, bytes].boxed()
         }
     }
 
@@ -700,13 +698,13 @@ mod tests {
 
         use super::{
             super::{PlutusData, PlutusDataTree},
-            any_memoized_plutus_data, array, bignint, biguint, bytes, constr, constr_any, int, map,
+            array, bignint, biguint, bytes, constr, constr_any, int, map,
         };
         use crate::{MemoizedPlutusData, cbor, plutus_data::BigInt};
 
         proptest! {
             #[test]
-            fn cbor_roundtrip(original_data in any_memoized_plutus_data(3)) {
+            fn cbor_roundtrip(original_data in any::<MemoizedPlutusData>()) {
                 let bytes = cbor::to_vec(&original_data).unwrap();
                 let data: MemoizedPlutusData = cbor::decode(&bytes).unwrap();
                 assert_eq!(data, original_data);

@@ -75,7 +75,7 @@
 //! |------------------------------|---------|
 //! | `--network` | `NetworkName` |
 //! | `--epoch` | `target_epoch: Option<Epoch>` — epoch Amaru should **start from**; needs three prior consecutive snapshots |
-//! | `--ledger-dir` / `--chain-dir` | `ledger_dir` / `chain_dir` |
+//! | `--db-ledger` / `--db-chain` | `ledger_dir` / `chain_dir` |
 //! | (CWD) `snapshots/<network>/` | `snapshots_dir` — [`default_snapshots_dir`] |
 //! | `--s3-bucket`, `--s3-endpoint`, `--s3-region`, `--s3-public-url` | [`S3Config`] |
 //!
@@ -136,7 +136,7 @@ pub use aws::{
 };
 pub use bootstrap::{
     BOOTSTRAP_HEADERS_PER_POINT, BootstrapCancellation, BootstrapError, BootstrapReport, ChainState, ImportError,
-    InitialNonces, bootstrap, bootstrap_with_observer, fetch_headers_from_points, import_headers,
+    InitialNonces, bootstrap, bootstrap_epochs, bootstrap_with_observer, fetch_headers_from_points, import_headers,
     import_packaged_blocks, import_snapshots, import_snapshots_from_directory, store_chain_state,
     validate_publishable_snapshot_archive,
 };

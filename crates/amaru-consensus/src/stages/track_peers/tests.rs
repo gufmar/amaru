@@ -22,7 +22,7 @@ use amaru_protocols::chainsync::{
     self, ChainSyncInitiatorMsg, HeaderContent, InitiatorMessage, InitiatorMessage::RequestNext,
 };
 use amaru_pure_stage::{
-    Instant, assert_trace_contains, assert_trace_does_not_contain, assert_trace_match,
+    Instant, assert_trace_contains, assert_trace_does_not_contain, assert_trace_no_clock,
     simulation::running::OverrideResult, tm_send,
 };
 
@@ -36,13 +36,12 @@ use crate::{
         track_peers::{
             TrackPeers, TrackPeersMsg,
             test_setup::{
-                HEIGHT_RECHECK_INTERVAL, SIM_INITIAL_CLOCK_SECS, build_store, build_store_with_nonces,
-                height_recheck_schedule_id, make_block_header, new_tip, schedule_id_at, setup, setup_base,
-                setup_with_ledger_tip_until_sleeping, slot_start_to_header_micros, te_clear_peer_availability,
-                te_clock, te_clock_suspend, te_get_best_chain_tip, te_get_nonces, te_header_rejected, te_load_header,
-                te_load_point, te_record_header_announcement, te_record_rollback, te_schedule,
-                te_store_validated_header, te_sync_adoption_is_fast, te_validate_header, test_prep,
-                test_prep_with_max_peer_lead, tm_volatile_tip,
+                SIM_INITIAL_CLOCK_SECS, build_store, build_store_with_nonces, height_recheck_schedule_id,
+                make_block_header, new_tip, setup, setup_base, setup_with_ledger_tip_until_sleeping,
+                slot_start_to_header_micros, te_clear_peer_availability, te_clock_suspend, te_get_best_chain_tip,
+                te_get_nonces, te_header_rejected, te_load_header, te_load_point, te_record_header_announcement,
+                te_record_rollback, te_record_uninteresting, te_schedule, te_store_validated_header,
+                te_sync_adoption_is_fast, te_validate_header, test_prep, test_prep_with_max_peer_lead, tm_volatile_tip,
             },
         },
     },
@@ -339,14 +338,17 @@ fn test_intersect_not_found_untracked_notifies_uninteresting() {
         msg: chainsync::InitiatorResult::IntersectNotFound(Point::Origin),
     });
 
+    let now = Instant::at_offset(Duration::from_secs(SIM_INITIAL_CLOCK_SECS), start_in_era().relative_time);
     let (running, _guards, mut logs) = setup(&prep.rt_handle(), state.clone(), msg.clone(), build_store(&[]));
     assert_trace_contains(
         &running,
         &[
             te_state("tp-1", &state).into(),
             te_input("tp-1", &msg).into(),
-            te_send("tp-1", "peer_selection", PeerSelectionMsg::Uninteresting { peer, conn_id, after_rollback: false })
-                .into(),
+            te_clock_suspend("tp-1").into(),
+            te_record_uninteresting("tp-1", peer, conn_id, false, now).into(),
+            te_send("tp-1", &prep.handler, chainsync::InitiatorMessage::Done).into(),
+            te_clear_peer_availability("tp-1", peer).into(),
             te_state("tp-1", &state).into(),
         ],
     );
@@ -372,18 +374,17 @@ fn test_intersect_not_found_removes_peer() {
         msg: chainsync::InitiatorResult::IntersectNotFound(Point::Origin),
     });
 
+    let now = Instant::at_offset(Duration::from_secs(SIM_INITIAL_CLOCK_SECS), start_in_era().relative_time);
     let (running, _guards, mut logs) = setup(&prep.rt_handle(), state.clone(), msg.clone(), build_store(&[]));
     assert_trace_contains(
         &running,
         &[
             te_state("tp-1", &state).into(),
             te_input("tp-1", &msg).into(),
-            te_send(
-                "tp-1",
-                "peer_selection",
-                PeerSelectionMsg::Uninteresting { peer, conn_id: prep.conn_id, after_rollback: false },
-            )
-            .into(),
+            te_clock_suspend("tp-1").into(),
+            te_record_uninteresting("tp-1", peer, prep.conn_id, false, now).into(),
+            te_send("tp-1", &prep.handler, chainsync::InitiatorMessage::Done).into(),
+            te_clear_peer_availability("tp-1", peer).into(),
             te_state("tp-1", &expected).into(),
         ],
     );
@@ -410,21 +411,20 @@ fn test_roll_forward_unknown_peer_removes_peer() {
     });
 
     let (running, _guards, mut logs) = setup(&prep.rt_handle(), state.clone(), msg.clone(), build_store(&[]));
-    assert_trace_match(
+    assert_trace_no_clock(
         &running,
         &[
             te_state("tp-1", &state).into(),
             te_input("tp-1", &msg).into(),
             te_clock_suspend("tp-1").into(),
             te_send("tp-1", &prep.handler, RequestNext).into(),
-            te_header_rejected("invalid header").into(),
+            te_header_rejected("invalid header"),
             te_send("tp-1", "peer_selection", PeerSelectionMsg::adversarial(peer)).into(),
             te_state("tp-1", &state).into(),
         ],
     );
     logs.assert_and_remove(Level::DEBUG, &["roll_forward.process", r#"peer="127.0.0.1:3001""#])
-        .assert_and_remove(Level::DEBUG, &["perf.header.lifecycle", r#"outcome="invalid_header""#])
-        .assert_and_remove(Level::ERROR, &["perf.header.lifecycle", "Unknown peer"])
+        .assert_and_remove(Level::ERROR, &["perf.header.lifecycle", r#"outcome="invalid_header""#, "Unknown peer"])
         .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
 }
 
@@ -450,7 +450,7 @@ fn test_roll_forward_known_peer_header_already_stored() {
     let received_at = Instant::at_offset(Duration::from_secs(SIM_INITIAL_CLOCK_SECS), start_in_era().relative_time);
     let (running, _guards, mut logs) =
         setup(&prep.rt_handle(), state.clone(), msg.clone(), build_store_with_nonces(slice::from_ref(header)));
-    assert_trace_match(
+    assert_trace_no_clock(
         &running,
         &[
             te_state("tp-1", &state).into(),
@@ -710,14 +710,16 @@ fn test_roll_forward_invalid_variant_removes_peer() {
         &[
             te_state("tp-1", &state).into(),
             te_input("tp-1", &msg).into(),
-            te_header_rejected("undecodable header").into(),
+            te_header_rejected("undecodable header"),
             te_send("tp-1", "peer_selection", PeerSelectionMsg::adversarial(peer)).into(),
             te_state("tp-1", &expected).into(),
         ],
     );
-    logs.assert_and_remove(Level::ERROR, &["perf.header.lifecycle", "Invalid header variant"])
-        .assert_and_remove(Level::DEBUG, &["perf.header.lifecycle", r#"outcome="undecodable_header""#])
-        .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
+    logs.assert_and_remove(
+        Level::ERROR,
+        &["perf.header.lifecycle", r#"outcome="undecodable_header""#, "Invalid header variant"],
+    )
+    .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
 }
 
 #[test]
@@ -745,14 +747,16 @@ fn test_roll_forward_invalid_cbor_removes_peer() {
         &[
             te_state("tp-1", &state).into(),
             te_input("tp-1", &msg).into(),
-            te_header_rejected("undecodable header").into(),
+            te_header_rejected("undecodable header"),
             te_send("tp-1", "peer_selection", PeerSelectionMsg::adversarial(peer)).into(),
             te_state("tp-1", &expected).into(),
         ],
     );
-    logs.assert_and_remove(Level::ERROR, &["perf.header.lifecycle", "Failed to decode header"])
-        .assert_and_remove(Level::DEBUG, &["perf.header.lifecycle", r#"outcome="undecodable_header""#])
-        .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
+    logs.assert_and_remove(
+        Level::ERROR,
+        &["perf.header.lifecycle", r#"outcome="undecodable_header""#, "Failed to decode header"],
+    )
+    .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
 }
 
 #[test]
@@ -774,21 +778,23 @@ fn test_roll_forward_invalid_parent_removes_peer() {
     state.insert_peer(peer, prep.conn_id, parent.point(), parent.point());
 
     let (running, _guards, mut logs) = setup(&prep.rt_handle(), state.clone(), msg.clone(), build_store(&[]));
-    assert_trace_match(
+    assert_trace_no_clock(
         &running,
         &[
             te_state("tp-1", &state).into(),
             te_input("tp-1", &msg).into(),
             te_clock_suspend("tp-1").into(),
             te_send("tp-1", &prep.handler, RequestNext).into(),
-            te_header_rejected("invalid header").into(),
+            te_header_rejected("invalid header"),
             te_send("tp-1", "peer_selection", PeerSelectionMsg::adversarial(peer)).into(),
             te_state("tp-1", &expected).into(),
         ],
     );
     logs.assert_and_remove(Level::DEBUG, &["roll_forward.process", r#"peer="127.0.0.1:3001""#])
-        .assert_and_remove(Level::DEBUG, &["perf.header.lifecycle", r#"outcome="invalid_header""#])
-        .assert_and_remove(Level::ERROR, &["perf.header.lifecycle", "Invalid header parent"])
+        .assert_and_remove(
+            Level::ERROR,
+            &["perf.header.lifecycle", r#"outcome="invalid_header""#, "Invalid header parent"],
+        )
         .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
 }
 
@@ -810,21 +816,23 @@ fn test_roll_forward_invalid_height_removes_peer() {
     state.insert_peer(peer, prep.conn_id, parent.point(), parent.point());
 
     let (running, _guards, mut logs) = setup(&prep.rt_handle(), state.clone(), msg.clone(), build_store(&[]));
-    assert_trace_match(
+    assert_trace_no_clock(
         &running,
         &[
             te_state("tp-1", &state).into(),
             te_input("tp-1", &msg).into(),
             te_clock_suspend("tp-1").into(),
             te_send("tp-1", &prep.handler, RequestNext).into(),
-            te_header_rejected("invalid header").into(),
+            te_header_rejected("invalid header"),
             te_send("tp-1", "peer_selection", PeerSelectionMsg::adversarial(peer)).into(),
             te_state("tp-1", &expected).into(),
         ],
     );
     logs.assert_and_remove(Level::DEBUG, &["roll_forward.process", r#"peer="127.0.0.1:3001""#])
-        .assert_and_remove(Level::DEBUG, &["perf.header.lifecycle", r#"outcome="invalid_header""#])
-        .assert_and_remove(Level::ERROR, &["perf.header.lifecycle", "Invalid header height"])
+        .assert_and_remove(
+            Level::ERROR,
+            &["perf.header.lifecycle", r#"outcome="invalid_header""#, "Invalid header height"],
+        )
         .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
 }
 
@@ -846,21 +854,23 @@ fn test_roll_forward_invalid_point_removes_peer() {
     state.insert_peer(peer, prep.conn_id, parent.point(), parent.point());
 
     let (running, _guards, mut logs) = setup(&prep.rt_handle(), state.clone(), msg.clone(), build_store(&[]));
-    assert_trace_match(
+    assert_trace_no_clock(
         &running,
         &[
             te_state("tp-1", &state).into(),
             te_input("tp-1", &msg).into(),
             te_clock_suspend("tp-1").into(),
             te_send("tp-1", &prep.handler, RequestNext).into(),
-            te_header_rejected("invalid header").into(),
+            te_header_rejected("invalid header"),
             te_send("tp-1", "peer_selection", PeerSelectionMsg::adversarial(peer)).into(),
             te_state("tp-1", &expected).into(),
         ],
     );
     logs.assert_and_remove(Level::DEBUG, &["roll_forward.process", r#"peer="127.0.0.1:3001""#])
-        .assert_and_remove(Level::DEBUG, &["perf.header.lifecycle", r#"outcome="invalid_header""#])
-        .assert_and_remove(Level::ERROR, &["perf.header.lifecycle", "Invalid header point"])
+        .assert_and_remove(
+            Level::ERROR,
+            &["perf.header.lifecycle", r#"outcome="invalid_header""#, "Invalid header point"],
+        )
         .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
 }
 
@@ -892,10 +902,9 @@ fn test_roll_forward_header_validation_failure_removes_peer() {
         });
 
     logs.assert_and_remove(Level::DEBUG, &["roll_forward.process", r#"peer="127.0.0.1:3001""#])
-        .assert_and_remove(Level::DEBUG, &["perf.header.lifecycle", r#"outcome="invalid_header""#])
-        .assert_and_remove(Level::ERROR, &["perf.header.lifecycle"])
+        .assert_and_remove(Level::ERROR, &["perf.header.lifecycle", r#"outcome="invalid_header""#])
         .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
-    assert_trace_match(
+    assert_trace_no_clock(
         &running,
         &[
             te_state("tp-1", &state).into(),
@@ -904,7 +913,7 @@ fn test_roll_forward_header_validation_failure_removes_peer() {
             te_send("tp-1", &prep.handler, RequestNext).into(),
             te_get_nonces("tp-1", header.hash()).into(),
             te_validate_header("tp-1", header.clone()).into(),
-            te_header_rejected("invalid header").into(),
+            te_header_rejected("invalid header"),
             te_send("tp-1", "peer_selection", PeerSelectionMsg::adversarial(peer)).into(),
             te_state("tp-1", &expected).into(),
         ],
@@ -942,10 +951,12 @@ fn test_roll_forward_header_slot_too_far_future_adversarial() {
     let (running, _guards, mut logs) = setup(&prep.rt_handle(), state.clone(), msg.clone(), build_store(&[]));
 
     logs.assert_and_remove(Level::DEBUG, &["roll_forward.process", r#"peer="127.0.0.1:3001""#])
-        .assert_and_remove(Level::DEBUG, &["perf.header.lifecycle", r#"outcome="invalid_header""#])
-        .assert_and_remove(Level::ERROR, &["perf.header.lifecycle", "ahead of local time"])
+        .assert_and_remove(
+            Level::ERROR,
+            &["perf.header.lifecycle", r#"outcome="invalid_header""#, "ahead of local time"],
+        )
         .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
-    assert_trace_match(
+    assert_trace_no_clock(
         &running,
         &[
             te_state("tp-1", &state).into(),
@@ -954,7 +965,7 @@ fn test_roll_forward_header_slot_too_far_future_adversarial() {
             te_get_best_chain_tip("tp-1").into(),
             te_sync_adoption_is_fast("tp-1", now).into(),
             te_send("tp-1", &prep.handler, RequestNext).into(),
-            te_header_rejected("invalid header").into(),
+            te_header_rejected("invalid header"),
             te_send("tp-1", "peer_selection", PeerSelectionMsg::adversarial(peer)).into(),
             te_state("tp-1", &expected).into(),
         ],
@@ -981,23 +992,23 @@ fn test_roll_forward_slot_past_time_horizon_is_adversarial() {
     state.insert_peer(peer, prep.conn_id, parent.point(), parent.point());
 
     let (running, _guards, mut logs) = setup(&prep.rt_handle(), state.clone(), msg.clone(), build_store(&[]));
-    assert_trace_match(
+    assert_trace_no_clock(
         &running,
         &[
             te_state("tp-1", &state).into(),
             te_input("tp-1", &msg).into(),
             te_clock_suspend("tp-1").into(),
             te_send("tp-1", &prep.handler, RequestNext).into(),
-            te_header_rejected("invalid header").into(),
+            te_header_rejected("invalid header"),
             te_send("tp-1", "peer_selection", PeerSelectionMsg::adversarial(peer)).into(),
             te_state("tp-1", &expected).into(),
         ],
     );
-    logs.assert_and_remove(Level::ERROR, &["perf.header.lifecycle", "past time horizon"]).assert_no_remaining_at([
-        Level::INFO,
-        Level::WARN,
+    logs.assert_and_remove(
         Level::ERROR,
-    ]);
+        &["perf.header.lifecycle", r#"outcome="invalid_header""#, "past time horizon"],
+    )
+    .assert_no_remaining_at([Level::INFO, Level::WARN, Level::ERROR]);
 }
 
 /// Header onset 1–2s ahead of sim clock → clock-skew defer (not adversarial).
@@ -1081,10 +1092,9 @@ fn test_roll_forward_stake_dist_far_ahead_rejects() {
         });
 
     logs.assert_and_remove(Level::DEBUG, &["roll_forward.process", r#"peer="127.0.0.1:3001""#])
-        .assert_and_remove(Level::DEBUG, &["perf.header.lifecycle", r#"outcome="invalid_header""#])
-        .assert_and_remove(Level::ERROR, &["perf.header.lifecycle"])
+        .assert_and_remove(Level::ERROR, &["perf.header.lifecycle", r#"outcome="invalid_header""#])
         .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
-    assert_trace_match(
+    assert_trace_no_clock(
         &running,
         &[
             te_state("tp-1", &state).into(),
@@ -1093,7 +1103,7 @@ fn test_roll_forward_stake_dist_far_ahead_rejects() {
             te_send("tp-1", &prep.handler, RequestNext).into(),
             te_get_nonces("tp-1", header.hash()).into(),
             te_validate_header("tp-1", header.clone()).into(),
-            te_header_rejected("invalid header").into(),
+            te_header_rejected("invalid header"),
             te_send("tp-1", "peer_selection", PeerSelectionMsg::adversarial(peer)).into(),
             te_state("tp-1", &expected).into(),
         ],
@@ -1128,8 +1138,8 @@ fn test_roll_backward_updates_peer() {
         &[
             te_state("tp-1", &state).into(),
             te_input("tp-1", &msg).into(),
-            te_send("tp-1", &prep.handler, RequestNext).into(),
             te_load_point("tp-1", current.hash()).into(),
+            te_send("tp-1", &prep.handler, RequestNext).into(),
             te_load_header("tp-1", current.hash()).into(),
             te_clock_read("tp-1").into(),
             te_record_rollback("tp-1", peer, header.point(), header.parent_hash(), now).into(),
@@ -1166,8 +1176,8 @@ fn test_roll_backward_unknown_peer_removes_peer() {
         &[
             te_state("tp-1", &state).into(),
             te_input("tp-1", &msg).into(),
-            te_send("tp-1", &prep.handler, RequestNext).into(),
             te_load_point("tp-1", current.hash()).into(),
+            te_send("tp-1", &prep.handler, RequestNext).into(),
             te_send("tp-1", "peer_selection", PeerSelectionMsg::adversarial(peer)).into(),
             te_state("tp-1", &state).into(),
         ],
@@ -1178,7 +1188,7 @@ fn test_roll_backward_unknown_peer_removes_peer() {
 }
 
 #[test]
-fn test_roll_backward_unknown_point_removes_peer() {
+fn test_roll_backward_unknown_point_is_uninteresting() {
     let prep = test_prep();
     let peer = Peer::for_test(3001);
     let current = Point::Specific(1u64.into(), HeaderHash::from([1u8; 32]), BlockHeight::from(1));
@@ -1193,21 +1203,31 @@ fn test_roll_backward_unknown_point_removes_peer() {
     let mut state = prep.state.clone();
     state.insert_peer(peer, prep.conn_id, Point::Origin, Point::Origin);
 
+    let now = Instant::at_offset(Duration::from_secs(SIM_INITIAL_CLOCK_SECS), start_in_era().relative_time);
     let (running, _guards, mut logs) = setup(&prep.rt_handle(), state.clone(), msg.clone(), build_store(&[]));
     assert_trace_contains(
         &running,
         &[
             te_state("tp-1", &state).into(),
             te_input("tp-1", &msg).into(),
-            te_send("tp-1", &prep.handler, RequestNext).into(),
             te_load_point("tp-1", current.hash()).into(),
-            te_send("tp-1", "peer_selection", PeerSelectionMsg::adversarial(peer)).into(),
+            te_clock_suspend("tp-1").into(),
+            te_record_uninteresting("tp-1", peer, prep.conn_id, true, now).into(),
+            te_send("tp-1", &prep.handler, chainsync::InitiatorMessage::Done).into(),
+            te_clear_peer_availability("tp-1", peer).into(),
             te_state("tp-1", &expected).into(),
         ],
     );
-    logs.assert_and_remove(Level::ERROR, &["chainsync.roll_backward_failed", "Unknown point"])
-        .assert_and_remove(Level::INFO, &["chainsync.roll_backward"])
-        .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
+    assert_trace_does_not_contain(
+        &running,
+        &[tm_send("tp-1", "peer_selection", PeerSelectionMsg::adversarial(peer)), tm_send("tp-1", "", RequestNext)],
+    );
+    logs.assert_and_remove(Level::INFO, &["chainsync.roll_backward"]).assert_no_remaining_at([
+        Level::DEBUG,
+        Level::INFO,
+        Level::WARN,
+        Level::ERROR,
+    ]);
 }
 
 /// Tests that a RollForward whose header height requires a ledger height beyond what is currently
@@ -1244,7 +1264,7 @@ fn test_roll_forward_defers_request_next() {
     .assert_and_remove(Level::DEBUG, &["roll_forward.process", r#"peer="127.0.0.1:3001""#])
     .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
 
-    assert_trace_match(
+    assert_trace_no_clock(
         &running,
         &[
             te_state("tp-1", &state).into(),
@@ -1306,7 +1326,7 @@ fn test_pipelined_headers_after_height_defer() {
         .assert_and_remove(Level::DEBUG, &["roll_forward.process", r#"peer="127.0.0.1:3001""#])
         .assert_and_remove(Level::DEBUG, &["roll_forward.process", r#"peer="127.0.0.1:3001""#])
         .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
-    assert_trace_match(
+    assert_trace_no_clock(
         &running,
         &[
             te_state("tp-1", &state).into(),
@@ -1347,7 +1367,6 @@ fn test_height_defer_recheck_when_ledger_advances() {
     });
 
     let sid = height_recheck_schedule_id();
-    let recheck_at = schedule_id_at(HEIGHT_RECHECK_INTERVAL).time();
     let advanced_tip = header.point();
 
     let (running, _guards, mut logs) =
@@ -1382,7 +1401,6 @@ fn test_height_defer_recheck_when_ledger_advances() {
             te_clock_suspend("tp-1").into(),
             te_schedule("tp-1", TrackPeersMsg::RecheckLedgerHeight, sid).into(),
             tm_state::<TrackPeers>("tp-1", |s| s.deferred.len() == 1, "height deferred"),
-            te_clock(recheck_at).into(),
             te_input("tp-1", &TrackPeersMsg::RecheckLedgerHeight).into(),
             tm_volatile_tip("tp-1"),
             te_clock_suspend("tp-1").into(),
@@ -1586,14 +1604,14 @@ fn test_recheck_deferred_survives_purge_shrinking_the_list() {
     let msg = TrackPeersMsg::RecheckLedgerHeight;
 
     let (running, _guards, mut logs) = setup(&prep.rt_handle(), state.clone(), msg.clone(), build_store(&[]));
-    assert_trace_match(
+    assert_trace_no_clock(
         &running,
         &[
             te_state("tp-1", &state).into(),
             te_input("tp-1", &msg).into(),
             tm_volatile_tip("tp-1"),
             te_clock_suspend("tp-1").into(),
-            te_header_rejected("invalid header").into(),
+            te_header_rejected("invalid header"),
             te_send("tp-1", "peer_selection", PeerSelectionMsg::adversarial(peer)).into(),
             tm_state::<TrackPeers>(
                 "tp-1",
@@ -1602,9 +1620,11 @@ fn test_recheck_deferred_survives_purge_shrinking_the_list() {
             ),
         ],
     );
-    logs.assert_and_remove(Level::DEBUG, &["perf.header.lifecycle", r#"outcome="invalid_header""#])
-        .assert_and_remove(Level::ERROR, &["perf.header.lifecycle", "Invalid header parent"])
-        .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
+    logs.assert_and_remove(
+        Level::ERROR,
+        &["perf.header.lifecycle", r#"outcome="invalid_header""#, "Invalid header parent"],
+    )
+    .assert_no_remaining_at([Level::DEBUG, Level::INFO, Level::WARN, Level::ERROR]);
 }
 
 /// A deferred header that is still deferred on recheck must keep blocking its follow-ups.

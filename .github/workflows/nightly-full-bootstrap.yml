@@ -2,7 +2,7 @@ name: Nightly Full Bootstrap
 
 on:
   schedule:
-    - cron: "0 2 * * *"
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 permissions:
@@ -16,15 +16,15 @@ jobs:
   bootstrap-to-tip:
     name: Bootstrap ${{ matrix.network }} and synchronize to tip
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
-        network: [preprod, preview]
+        network: [preprod, preview, mainnet]
 
     env:
       AMARU_NETWORK: ${{ matrix.network }}
-      AMARU_NO_TUI: "true"
+      AMARU_TUI_OFF: "true"
       AMARU_BIN: target/release/amaru
 
     steps:
@@ -47,39 +47,78 @@ jobs:
           set -Eeuo pipefail
 
           state_dir="$RUNNER_TEMP/amaru-nightly-full-bootstrap-$AMARU_NETWORK"
-          export AMARU_LEDGER_DIR="$state_dir/ledger.db"
-          export AMARU_CHAIN_DIR="$state_dir/chain.db"
+          export AMARU_DB_LEDGER="$state_dir/ledger.db"
+          export AMARU_DB_CHAIN="$state_dir/chain.db"
           mkdir -p "$state_dir"
+
+          koios_host="$AMARU_NETWORK"
+          if [[ "$AMARU_NETWORK" == "mainnet" ]]; then
+            koios_host="api"
+          fi
 
           target_slot="$(
             curl --fail --silent --show-error --retry 5 --retry-all-errors \
-              "https://$AMARU_NETWORK.koios.rest/api/v1/tip" \
+              "https://$koios_host.koios.rest/api/v1/tip" \
               | jq -er '.[0].abs_slot'
           )"
           echo "Network tip at test start: slot $target_slot"
 
-          "$AMARU_BIN" node bootstrap 2>&1 | tee bootstrap.log
+          source scripts/demos/common/amaru.sh
+          amaru_pid=""
+          current_log=bootstrap.log
 
+          trap '
+            if [[ -n "$amaru_pid" ]]; then
+              kill -KILL "$amaru_pid" 2>/dev/null || true
+              wait "$amaru_pid" || true
+            fi
+          ' EXIT
+
+          fail() {
+            echo "::group::Last 200 lines of $current_log" >&2
+            tail -200 "$current_log" >&2 || true
+            echo "::endgroup::" >&2
+            echo "::error::$1" >&2
+            printf '## Full bootstrap failed (%s)\n\n~~~text\n%s\n%s\n~~~\n' \
+              "$AMARU_NETWORK" "$1" "${2:-}" | tee -a "$GITHUB_STEP_SUMMARY" >&2
+            exit 1
+          }
+
+          check_log_errors() {
+            local errors
+            if errors="$(strip_ansi < "$current_log" | grep -E \
+              '^[^[:space:]]+[[:space:]]+ERROR[[:space:]]|^ERROR[[:space:]:]|^error:|"level"[[:space:]]*:[[:space:]]*"ERROR"')"; then
+              fail "Amaru logged an error in $current_log" "$errors"
+            fi
+          }
+
+          : > bootstrap.log
+          bootstrap_epochs="$("$AMARU_BIN" snapshot epochs)"
+          bootstrap_epoch="${bootstrap_epochs%%$'\n'*}"
+          [[ "$bootstrap_epoch" =~ ^[0-9]+$ ]] || fail "No bootstrap epochs available for $AMARU_NETWORK"
+          echo "Earliest available bootstrap epoch: $bootstrap_epoch"
+
+          "$AMARU_BIN" node bootstrap --epoch "$bootstrap_epoch" > bootstrap.log 2>&1 &
+          amaru_pid=$!
+          while kill -0 "$amaru_pid" 2>/dev/null; do
+            check_log_errors
+            sleep 5
+          done
+          check_log_errors
+          wait "$amaru_pid" || fail "Amaru bootstrap failed"
+          amaru_pid=""
+          cat bootstrap.log
+
+          current_log=amaru.log
+          : > amaru.log
           "$AMARU_BIN" node run > amaru.log 2>&1 &
           amaru_pid=$!
 
-          cleanup() {
-            if kill -0 "$amaru_pid" 2>/dev/null; then
-              kill -INT "$amaru_pid"
-              wait "$amaru_pid" || true
-            fi
-          }
-          trap cleanup EXIT
-
-          source scripts/demos/common/amaru.sh
-
-          deadline=$((SECONDS + 7200))
-          while (( SECONDS < deadline )); do
+          while true; do
+            check_log_errors
             if ! kill -0 "$amaru_pid" 2>/dev/null; then
-              wait "$amaru_pid" || true
-              echo "Amaru stopped before reaching target slot $target_slot" >&2
-              tail -200 amaru.log >&2
-              exit 1
+              check_log_errors
+              fail "Amaru stopped before reaching target slot $target_slot"
             fi
 
             adopted_slot="$(adopted_slot_from_log amaru.log)"
@@ -88,17 +127,15 @@ jobs:
             if [[ "$adopted_slot" =~ ^[0-9]+$ ]] && (( adopted_slot >= target_slot )); then
               echo "Amaru reached target slot $target_slot at slot $adopted_slot"
               kill -INT "$amaru_pid"
-              wait "$amaru_pid"
+              wait "$amaru_pid" || fail "Amaru shutdown failed"
+              amaru_pid=""
+              check_log_errors
               trap - EXIT
               exit 0
             fi
 
-            sleep 15
+            sleep 5
           done
-
-          echo "Amaru did not reach target slot $target_slot within two hours" >&2
-          tail -200 amaru.log >&2
-          exit 1
 
       - name: Upload diagnostic logs
         if: always()

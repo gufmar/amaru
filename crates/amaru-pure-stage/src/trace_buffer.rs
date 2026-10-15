@@ -55,7 +55,7 @@ pub struct TraceBuffer {
 /// However, we need the entries in the continuation of the running program and we cannot clone,
 /// so there is a variant of this enum with the very same structure the captures only references
 /// to work around this problem: `TraceEntryRef`.
-#[derive(PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum TraceEntry {
     Suspend(Effect),
     Resume {
@@ -85,6 +85,40 @@ pub enum TerminationReason {
     Voluntary,
     Supervision(Name),
     Aborted,
+}
+
+impl PartialEq for TraceEntry {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            // Clock advances name a sim-elapsed instant. Compare that exactly so a test
+            // tolerance on Instant cannot make an early effect-duration wake match a
+            // later timer the test asked for.
+            (TraceEntry::Clock(left), TraceEntry::Clock(right)) => {
+                left.duration_since_global_epoch() == right.duration_since_global_epoch()
+            }
+            (TraceEntry::Suspend(left), TraceEntry::Suspend(right)) => left == right,
+            (
+                TraceEntry::Resume { stage: left_stage, response: left_response },
+                TraceEntry::Resume { stage: right_stage, response: right_response },
+            ) => left_stage == right_stage && left_response == right_response,
+            (
+                TraceEntry::Input { stage: left_stage, input: left_input },
+                TraceEntry::Input { stage: right_stage, input: right_input },
+            ) => left_stage == right_stage && left_input == right_input,
+            (
+                TraceEntry::State { stage: left_stage, state: left_state },
+                TraceEntry::State { stage: right_stage, state: right_state },
+            ) => left_stage == right_stage && left_state == right_state,
+            (
+                TraceEntry::Terminated { stage: left_stage, reason: left_reason },
+                TraceEntry::Terminated { stage: right_stage, reason: right_reason },
+            ) => left_stage == right_stage && left_reason == right_reason,
+            (TraceEntry::InvalidBytes(left_bytes, left_value), TraceEntry::InvalidBytes(right_bytes, right_value)) => {
+                left_bytes == right_bytes && left_value == right_value
+            }
+            _ => false,
+        }
+    }
 }
 
 impl TraceEntry {
@@ -178,6 +212,7 @@ impl Display for TraceEntry {
                         other @ StageResponse::ClockResponse(_)
                         | other @ StageResponse::WaitResponse(_)
                         | other @ StageResponse::CallResponse(_)
+                        | other @ StageResponse::TrySend(_)
                         | other @ StageResponse::CancelScheduleResponse(_)
                         | other @ StageResponse::ExternalResponse(_)
                         | other @ StageResponse::AddStageResponse(_) => format!(" -> {other}"),
@@ -293,20 +328,73 @@ enum TraceEntryRefRef<'a> {
 /// Helper struct that has the same serialization format as Effect but doesn’t require owned effect data.
 #[derive(serde::Serialize)]
 enum EffectRef<'a> {
-    Receive { at_stage: &'a Name },
-    Send { from: &'a Name, to: &'a Name, msg: &'a dyn SendData },
-    Call { from: &'a Name, to: &'a Name, duration: Duration, msg: &'a dyn SendData },
-    Clock { at_stage: &'a Name },
-    Wait { at_stage: &'a Name, duration: Duration },
-    Schedule { at_stage: &'a Name, msg: &'a dyn SendData, id: ScheduleId },
-    CancelSchedule { at_stage: &'a Name, id: ScheduleId },
-    SetTimeout { at_stage: &'a Name, slot: u64, delay: Duration, msg: &'a dyn SendData },
-    ClearTimeout { at_stage: &'a Name, slot: u64 },
-    External { at_stage: &'a Name, effect: &'a dyn crate::ExternalEffect },
-    Detach { at_stage: &'a Name, effect: &'a dyn crate::ExternalEffect },
-    Terminate { at_stage: &'a Name },
-    AddStage { at_stage: &'a Name, name: &'a Name },
-    WireStage { at_stage: &'a Name, name: &'a Name, initial_state: &'a dyn SendData, tombstone: &'a dyn SendData },
+    Receive {
+        at_stage: &'a Name,
+    },
+    Send {
+        from: &'a Name,
+        to: &'a Name,
+        msg: &'a dyn SendData,
+    },
+    TrySend {
+        from: &'a Name,
+        to: &'a Name,
+        msg: &'a dyn SendData,
+    },
+    Call {
+        from: &'a Name,
+        to: &'a Name,
+        duration: Duration,
+        msg: &'a dyn SendData,
+    },
+    Clock {
+        at_stage: &'a Name,
+    },
+    Wait {
+        at_stage: &'a Name,
+        duration: Duration,
+    },
+    Schedule {
+        at_stage: &'a Name,
+        msg: &'a dyn SendData,
+        id: ScheduleId,
+    },
+    CancelSchedule {
+        at_stage: &'a Name,
+        id: ScheduleId,
+    },
+    SetTimeout {
+        at_stage: &'a Name,
+        slot: u64,
+        delay: Duration,
+        msg: &'a dyn SendData,
+    },
+    ClearTimeout {
+        at_stage: &'a Name,
+        slot: u64,
+    },
+    External {
+        at_stage: &'a Name,
+        effect: &'a dyn crate::ExternalEffect,
+    },
+    Detach {
+        at_stage: &'a Name,
+        effect: &'a dyn crate::ExternalEffect,
+    },
+    Terminate {
+        at_stage: &'a Name,
+    },
+    AddStage {
+        at_stage: &'a Name,
+        name: &'a Name,
+    },
+    WireStage {
+        at_stage: &'a Name,
+        name: &'a Name,
+        initial_state: &'a dyn SendData,
+        tombstone: &'a dyn SendData,
+        mailbox_size: usize,
+    },
 }
 
 impl<'a> EffectRef<'a> {
@@ -314,6 +402,7 @@ impl<'a> EffectRef<'a> {
         Some(match effect {
             StageEffect::Receive => EffectRef::Receive { at_stage },
             StageEffect::Send(to, _call, msg) => EffectRef::Send { from: at_stage, to, msg: &**msg },
+            StageEffect::TrySend(to, msg) => EffectRef::TrySend { from: at_stage, to, msg: &**msg },
             StageEffect::Call(..) => return None,
             StageEffect::Clock => EffectRef::Clock { at_stage },
             StageEffect::Wait(duration) => EffectRef::Wait { at_stage, duration: *duration },
@@ -327,9 +416,13 @@ impl<'a> EffectRef<'a> {
             StageEffect::Detach(effect, _) => EffectRef::Detach { at_stage, effect: &**effect },
             StageEffect::Terminate => EffectRef::Terminate { at_stage },
             StageEffect::AddStage(name) => EffectRef::AddStage { at_stage, name },
-            StageEffect::WireStage(name, _transition, initial_state, tombstone) => {
-                EffectRef::WireStage { at_stage, name, initial_state: &**initial_state, tombstone: &**tombstone }
-            }
+            StageEffect::WireStage(name, _transition, initial_state, tombstone, mailbox_size) => EffectRef::WireStage {
+                at_stage,
+                name,
+                initial_state: &**initial_state,
+                tombstone: &**tombstone,
+                mailbox_size: *mailbox_size,
+            },
         })
     }
 }

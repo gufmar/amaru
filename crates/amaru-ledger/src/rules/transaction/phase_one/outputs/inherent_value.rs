@@ -46,10 +46,10 @@ pub fn execute(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, ops::Deref};
+    use std::collections::BTreeMap;
 
     use amaru_kernel::{
-        Address, AssetName, Hash, MemoizedDatum, MemoizedTransactionOutput, Multiasset, NonEmptyKeyValuePairs,
+        Address, AssetName, Assets, Hash, MemoizedDatum, MemoizedTransactionOutput, Multiasset,
         PREPROD_DEFAULT_PROTOCOL_PARAMETERS, PositiveCoin, ProtocolParameters, Value, cbor::count_bytes, from_cbor,
         to_cbor, utils::tests::random_bytes,
     };
@@ -78,20 +78,19 @@ mod tests {
 
     #[test]
     fn large_maps_with_indefinite_length_headers_are_valid_with_the_cardano_node_encoding() {
-        // Maps with less than or equal to 255 entries have the same size regardless of the encoding
-        let multiassets = multiassets_of(20);
-        assert_eq!(count_bytes(&multiassets), to_cbor(multiassets.deref()).len());
+        // Up to 23 entries the node writes a definite-length header, and an indefinite one above,
+        // which is what the ledger-side measurement counts.
+        let small = to_cbor(&multiassets_of(20));
+        assert_eq!(small[0], 0xb4, "20 policies are written with a definite-length header");
+        assert_eq!(count_bytes(&multiassets_of(20)), small.len());
 
-        let multiassets = multiassets_of(100);
-        assert_eq!(count_bytes(&multiassets), to_cbor(multiassets.deref()).len());
+        let large = to_cbor(&multiassets_of(324));
+        assert_eq!(large[0], 0xbf, "324 policies are written with an indefinite-length header");
+        assert_eq!(large[large.len() - 1], 0xff, "an indefinite-length map ends with a break");
+        assert_eq!(count_bytes(&multiassets_of(324)), large.len());
 
-        // From 256 entries on, there is a one-byte difference:
-        // The indefinite-length header is one byte shorter than the definite-length header.
-        // The ledger size is therefore one byte smaller than the amaru encoding.
         let multiassets = multiassets_of(324);
-        assert_eq!(count_bytes(&multiassets), to_cbor(multiassets.deref()).len() - 1);
-
-        let bytes = to_cbor(&(2000000, multiassets.deref()));
+        let bytes = to_cbor(&(2000000, &multiassets));
         let output = output_with(from_cbor(&bytes).expect("valid value"));
         let result = execute(&protocol_parameters_with_max_size(10700), &output);
         assert!(result.is_ok(), "the value should have been accepted {}", result.unwrap_err());
@@ -105,7 +104,7 @@ mod tests {
         // 303): 358 assets across 6 policies, one of them holding 324 assets. The network
         // accepted it at exactly maxValueSize=5000 while our the amaru encoding originally returned 5001.
         let value: Value = amaru_kernel::include_cbor!("phase-one/preprod/b2c00c16/output-1-value.cbor");
-        let ledger_size = count_bytes(&value) as u64;
+        let ledger_size = count_bytes(&value) as u32;
         assert_eq!(ledger_size, 5000, "the ledger-side size must be 5000 bytes");
 
         let output = output_with(value);
@@ -126,9 +125,12 @@ mod tests {
 
     /// A value carrying `assets` distinct single-unit assets under one policy.
     fn multiassets_of(n: u16) -> Multiasset<PositiveCoin> {
-        let assets =
-            NonEmptyKeyValuePairs::try_from(vec![(AssetName::empty(), PositiveCoin::try_from(1).unwrap())]).unwrap();
-        (0..n).map(|_| (Hash::from(random_bytes(28).as_slice()), assets.clone())).collect::<BTreeMap<_, _>>().into()
+        let assets = Assets::try_from(BTreeMap::from([(AssetName::empty(), PositiveCoin::try_from(1).unwrap())]))
+            .expect("one asset");
+        (0..n)
+            .map(|_| (Hash::try_from(random_bytes(28).as_slice()).unwrap(), assets.clone()))
+            .collect::<BTreeMap<_, _>>()
+            .into()
     }
 
     fn output_with(value: Value) -> MemoizedTransactionOutput {
@@ -137,7 +139,7 @@ mod tests {
         MemoizedTransactionOutput::new(false, address, value, MemoizedDatum::None, None)
     }
 
-    fn protocol_parameters_with_max_size(max_value_size: u64) -> ProtocolParameters {
+    fn protocol_parameters_with_max_size(max_value_size: u32) -> ProtocolParameters {
         ProtocolParameters { max_value_size, lovelace_per_utxo_byte: 0, ..PREPROD_DEFAULT_PROTOCOL_PARAMETERS.clone() }
     }
 }

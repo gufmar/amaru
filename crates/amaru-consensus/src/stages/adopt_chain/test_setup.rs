@@ -35,6 +35,7 @@ use amaru_pure_stage::{
 use tokio::runtime::Runtime;
 
 use super::*;
+pub use crate::stages::test_utils::assert_trace_no_clock;
 use crate::stages::test_utils::{BufferWriter, Logs, install_test_log_capture};
 
 /// Header tree for testing adopt_chain control flow:
@@ -142,6 +143,7 @@ pub fn register_guards() -> DeserializerGuards {
         amaru_pure_stage::register_effect_deserializer::<FindAncestorOnBestChainEffect>().boxed(),
         amaru_pure_stage::register_effect_deserializer::<FindAnchorAtHeightEffect>().boxed(),
         amaru_pure_stage::register_effect_deserializer::<crate::performance::PruneBelowEffect>().boxed(),
+        amaru_pure_stage::register_effect_deserializer::<crate::performance::RecordBlockValidEffect>().boxed(),
         amaru_pure_stage::register_effect_deserializer::<crate::effects::UpdateConsensusModeEffect>().boxed(),
         amaru_pure_stage::register_effect_deserializer::<crate::performance::RecordSyncAdoptionEffect>().boxed(),
         amaru_pure_stage::register_data_deserializer::<crate::effects::ConsensusMode>().boxed(),
@@ -158,6 +160,19 @@ pub fn te_record_sync_adoption(at_stage: &str, at: amaru_pure_stage::Instant, li
     TraceEntry::suspend(Effect::external(
         at_stage,
         Box::new(crate::performance::Performance::record_sync_adoption(at, live)),
+    ))
+}
+
+pub fn te_record_block_valid(
+    at_stage: &str,
+    hash: HeaderHash,
+    height: BlockHeight,
+    now: amaru_pure_stage::Instant,
+    syncing: bool,
+) -> TraceEntry {
+    TraceEntry::suspend(Effect::external(
+        at_stage,
+        Box::new(crate::performance::Performance::record_block_valid(hash, height, now, syncing)),
     ))
 }
 
@@ -243,15 +258,4 @@ pub fn te_terminate(at_stage: impl AsRef<str>) -> TraceEntry {
 
 pub fn te_terminated(at_stage: impl AsRef<str>, reason: TerminationReason) -> TraceEntry {
     TraceEntry::Terminated { stage: Name::from(at_stage.as_ref()), reason }
-}
-
-#[track_caller]
-pub fn assert_trace(running: &SimulationRunning, expected: &[TraceEntry]) {
-    let mut tb = running.trace_buffer().lock();
-    let trace = tb
-        .iter_entries()
-        .filter_map(|(_, e)| (!matches!(e, TraceEntry::Resume { .. })).then_some(e))
-        .collect::<Vec<_>>();
-    tb.clear();
-    pretty_assertions::assert_eq!(trace, expected);
 }

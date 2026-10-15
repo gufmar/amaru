@@ -24,7 +24,7 @@
 use std::{cmp::Ordering, env::var, net::SocketAddr, num::NonZeroU8, sync::Arc, time::Duration};
 
 use amaru_consensus::{
-    effects::{GenerateRandomSeed, ValidateBlockEffect, ValidateHeaderEffect},
+    effects::{ValidateBlockEffect, ValidateHeaderEffect},
     stages::select_chain::cmp_tip,
 };
 use amaru_kernel::{
@@ -47,7 +47,7 @@ use super::{
     HONEST_PAYLOAD_DELAY_MAX_NANOS, HeapLogEntry, HeapLogKind, InjectorShared, WIRE_DELAY_MAX_NANOS,
     WorldConnectionProvider, WorldLoop, build_injector, build_injector_peer, build_world_node,
     support::{
-        derive_seed, draw_test_seed, fragment_trace_guards, peer_saw_roll_forward, peer_trace, seed_bytes, test_seeds,
+        derive_seed, draw_test_seed, fragment_trace_guards, peer_saw_roll_forward, peer_trace, test_seeds,
         tm_chainsync_roll_forward, tm_chainsync_roll_forward_of, tm_validate_header,
     },
 };
@@ -61,22 +61,28 @@ const TAG_PEER_SEL: u64 = 200;
 /// First node listen port is `base + NODE_PORT_OFFSET`.
 const NODE_PORT_OFFSET: u16 = 11;
 
-const BLOCKFETCH_FRAGMENT: usize = 6;
-const BLOCKFETCH_HORIZON_NANOS: u64 = 5_000_000_000;
+pub(super) const BLOCKFETCH_FRAGMENT: usize = 6;
+/// Catch-up horizon for a `BLOCKFETCH_FRAGMENT` chain.
+///
+/// Stubbed block validation still samples the production `ValidateBlockEffect` curve.
+/// The stage applies one block at a time, and that curve's maximum is 4.74s. The first
+/// header is the ancestor, so the remaining five extensions can take just under 24s
+/// before the tip is adopted.
+pub(super) const BLOCKFETCH_HORIZON_NANOS: u64 = 30_000_000_000;
 
 fn provider(seed: u64) -> Arc<WorldConnectionProvider> {
     Arc::new(WorldConnectionProvider::new(seed))
 }
 
-fn loopback(port: u16) -> SocketAddr {
+pub(super) fn loopback(port: u16) -> SocketAddr {
     SocketAddr::from(([127, 0, 0, 1], port))
 }
 
-fn node_listen(base: u16, index: usize) -> SocketAddr {
+pub(super) fn node_listen(base: u16, index: usize) -> SocketAddr {
     loopback(base + NODE_PORT_OFFSET + index as u16)
 }
 
-fn peer_at(addr: SocketAddr) -> Peer {
+pub(super) fn peer_at(addr: SocketAddr) -> Peer {
     Peer::try_from(addr).expect("world tests use IPv4 loopback")
 }
 
@@ -88,7 +94,7 @@ fn generated_headers(n: usize, seed: u64) -> Vec<Header> {
     run_strategy_with_seed(seed, any_headers_chain_with_root(n, conway_root().with_height(BlockHeight::from(0))))
 }
 
-fn injector_linear_store(n: usize, seed: u64) -> (Arc<InMemoryChainStore>, Vec<Header>) {
+pub(super) fn injector_linear_store(n: usize, seed: u64) -> (Arc<InMemoryChainStore>, Vec<Header>) {
     let headers = generated_headers(n, seed);
     let store = Arc::new(InMemoryChainStore::new());
     store.set_anchor_point(&headers[0].point()).unwrap();
@@ -100,11 +106,6 @@ fn injector_linear_store(n: usize, seed: u64) -> (Arc<InMemoryChainStore>, Vec<H
     (store, headers)
 }
 
-fn stub_peer_selection_seed(sim: &mut SimulationRunning, seed: u64) {
-    let bytes = seed_bytes(seed);
-    sim.override_external_effect::<GenerateRandomSeed>(usize::MAX, move |_| OverrideResult::handled(bytes));
-}
-
 fn stub_generated_validation(sim: &mut SimulationRunning) {
     sim.override_external_effect::<ValidateHeaderEffect>(usize::MAX, |_| {
         OverrideResult::handled(Ok(Nonces::for_tests()))
@@ -114,14 +115,15 @@ fn stub_generated_validation(sim: &mut SimulationRunning) {
     });
 }
 
-fn generated_node(seed: u64, index: usize, listen: SocketAddr) -> NodeTestConfig {
+pub(super) fn generated_node(seed: u64, index: usize, listen: SocketAddr) -> NodeTestConfig {
     NodeTestConfig::default()
         .with_listen_address(&listen.to_string())
         .with_seed(derive_seed(seed, TAG_NODE + index as u64))
+        .with_random_seed(derive_seed(seed, TAG_PEER_SEL + index as u64))
         .with_trace_buffer(TraceBuffer::new_shared(10_000, 8_000_000))
 }
 
-fn with_ancestor(config: NodeTestConfig, ancestor: &Header) -> NodeTestConfig {
+pub(super) fn with_ancestor(config: NodeTestConfig, ancestor: &Header) -> NodeTestConfig {
     config.with_validated_blocks(vec![ancestor.clone()])
 }
 
@@ -129,15 +131,12 @@ fn spawn_node(
     config: NodeTestConfig,
     connections: ConnectionsResource,
     handle: &Handle,
-    seed: u64,
-    index: usize,
     stub_validation: bool,
 ) -> SimulationRunning {
     let mut sim = build_world_node(&config, connections, handle).expect("production node");
     if stub_validation {
         stub_generated_validation(&mut sim);
     }
-    stub_peer_selection_seed(&mut sim, derive_seed(seed, TAG_PEER_SEL + index as u64));
     sim
 }
 
@@ -169,8 +168,8 @@ fn world_with_injector(
 
 /// Sync tests: production graphs may `Handle::block_on` DurationDist::Zero, which
 /// panics inside an existing Tokio context.
-struct SyncRun {
-    seed: u64,
+pub(super) struct SyncRun {
+    pub(super) seed: u64,
     handle: Handle,
     provider: Arc<WorldConnectionProvider>,
     _runtime: Runtime,
@@ -178,7 +177,7 @@ struct SyncRun {
 }
 
 impl SyncRun {
-    fn new(label: &str) -> Self {
+    pub(super) fn new(label: &str) -> Self {
         Self::new_seeded(label, None)
     }
 
@@ -203,15 +202,15 @@ impl SyncRun {
         self.provider.clone()
     }
 
-    fn spawn_catch_up(&self, index: usize, config: NodeTestConfig) -> SimulationRunning {
-        spawn_node(config, self.connections(), &self.handle, self.seed, index, true)
+    pub(super) fn spawn_catch_up(&self, _index: usize, config: NodeTestConfig) -> SimulationRunning {
+        spawn_node(config, self.connections(), &self.handle, true)
     }
 
-    fn spawn_live(&self, index: usize, config: NodeTestConfig) -> SimulationRunning {
-        spawn_node(config, self.connections(), &self.handle, self.seed, index, false)
+    fn spawn_live(&self, _index: usize, config: NodeTestConfig) -> SimulationRunning {
+        spawn_node(config, self.connections(), &self.handle, false)
     }
 
-    fn spawn_injector(
+    pub(super) fn spawn_injector(
         &self,
         store: Arc<InMemoryChainStore>,
         listen: SocketAddr,
@@ -219,7 +218,7 @@ impl SyncRun {
         spawn_injector(store, self.connections(), listen, self.seed, &self.handle)
     }
 
-    fn injector_world(
+    pub(super) fn injector_world(
         &self,
         injector: SimulationRunning,
         shared: Arc<InjectorShared>,
@@ -411,20 +410,38 @@ fn test_world_blockfetch_pipelined() {
     run_blockfetch_generated_chain(NonZeroU8::new(2).unwrap(), 9720);
 }
 
-fn run_blockfetch_generated_chain(n: NonZeroU8, base_port: u16) {
-    let run = SyncRun::new(&format!("blockfetch n={}", n.get()));
+/// Injector plus one follower on [`BLOCKFETCH_FRAGMENT`], before the world runs.
+pub(super) fn spawn_blockfetch_follower(
+    run: &SyncRun,
+    base_port: u16,
+    pipeline: NonZeroU8,
+) -> (WorldLoop, Vec<Header>) {
     let injector_addr = loopback(base_port);
     let node_addr = node_listen(base_port, 0);
     let (store, headers) = injector_linear_store(BLOCKFETCH_FRAGMENT, run.seed);
-    let head = headers.last().expect("fragment HEAD").clone();
-
     let (injector, shared) = run.spawn_injector(store, injector_addr);
     let node = with_ancestor(
-        generated_node(run.seed, 0, node_addr).with_upstream_peer(peer_at(injector_addr)).with_blockfetch_pipeline_n(n),
+        generated_node(run.seed, 0, node_addr)
+            .with_upstream_peer(peer_at(injector_addr))
+            .with_blockfetch_pipeline_n(pipeline),
         &headers[0],
     );
-    let mut world = run.injector_world(injector, shared, vec![run.spawn_catch_up(0, node)], &headers);
-    world.run_until_horizon_on_best_chain_tip(BLOCKFETCH_HORIZON_NANOS, |_| {});
+    let world = run.injector_world(injector, shared, vec![run.spawn_catch_up(0, node)], &headers);
+    (world, headers)
+}
+
+fn run_blockfetch_generated_chain(n: NonZeroU8, base_port: u16) {
+    let run = SyncRun::new(&format!("blockfetch n={}", n.get()));
+    let injector_addr = loopback(base_port);
+    let (mut world, headers) = spawn_blockfetch_follower(&run, base_port, n);
+    let head = headers.last().expect("fragment HEAD").clone();
+    let head_point = head.point();
+    world.run_until_horizon_on_best_chain_tip(BLOCKFETCH_HORIZON_NANOS, |world| {
+        let store = world.graphs()[1].resources().get::<ResourceHeaderStore>().expect("node chain store");
+        if store.get_best_chain_tip() == head_point {
+            world.halt();
+        }
+    });
 
     let log = world.heap_log();
     assert_dialed(&log, injector_addr, run.seed, "node must connect");
@@ -479,7 +496,13 @@ fn run_duplex_inbound_upstream(seed: Option<u64>) {
         vec![run.spawn_catch_up(0, node_a), run.spawn_catch_up(1, node_b)],
         &headers,
     );
-    world.run_until_horizon_on_best_chain_tip(BLOCKFETCH_HORIZON_NANOS, |_| {});
+    let head_point = head.point();
+    world.run_until_horizon_on_best_chain_tip(BLOCKFETCH_HORIZON_NANOS, |world| {
+        let store = world.graphs()[2].resources().get::<ResourceHeaderStore>().expect("node chain store");
+        if store.get_best_chain_tip() == head_point {
+            world.halt();
+        }
+    });
 
     let log = world.heap_log();
     assert_dialed(&log, injector_addr, run.seed, "A must dial the injector");
@@ -586,7 +609,7 @@ fn run_p_join_quiescent_chain(
                     .with_trace_buffer(TraceBuffer::new_shared(20_000, 16_000_000)),
                 &headers[0],
             );
-            spawn_node(node, connections.clone(), handle, seed, i, true)
+            spawn_node(node, connections.clone(), handle, true)
         })
         .collect();
 

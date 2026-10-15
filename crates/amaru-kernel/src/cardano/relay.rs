@@ -14,9 +14,14 @@
 
 use std::{fmt, net::Ipv6Addr};
 
+#[cfg(any(test, feature = "test-utils"))]
+use proptest::{
+    option,
+    prelude::{Arbitrary, BoxedStrategy, Strategy, any, prop_oneof},
+};
 use serde::ser::SerializeStruct;
 
-use crate::{Bytes, MaxString128, cbor};
+use crate::{MaxString128, cardano::fixed_bytes::FixedBytes, cbor};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Relay {
@@ -25,8 +30,8 @@ pub enum Relay {
     MultiHostName(MaxString128),
 }
 
-type IPv4 = Bytes;
-type IPv6 = Bytes;
+pub type IPv4 = FixedBytes<4>;
+pub type IPv6 = FixedBytes<16>;
 
 impl fmt::Display for Relay {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -185,5 +190,29 @@ pub fn serialize<S: serde::Serializer>(relay: &Relay, serializer: S) -> Result<S
             s.serialize_field("type", "hostname")?;
             s.end()
         }
+    }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl Arbitrary for Relay {
+    type Parameters = ();
+    type Strategy = BoxedStrategy<Self>;
+
+    #[expect(clippy::unwrap_used)]
+    fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
+        let any_port = || option::of(any::<u32>());
+        let any_dns_name = || {
+            any::<String>().prop_filter_map("DNS name must fit MaxString128", |name| MaxString128::try_from(name).ok())
+        };
+        let any_ipv4 = option::of(any::<[u8; 4]>().prop_map(|octets| IPv4::try_from(Vec::from(octets)).unwrap()));
+        let any_ipv6 = option::of(any::<[u8; 16]>().prop_map(|octets| IPv6::try_from(Vec::from(octets)).unwrap()));
+
+        let single_host_addr =
+            (any_port(), any_ipv4, any_ipv6).prop_map(|(port, ipv4, ipv6)| Relay::SingleHostAddr(port, ipv4, ipv6));
+        let single_host_name =
+            (any_port(), any_dns_name()).prop_map(|(port, dns_name)| Relay::SingleHostName(port, dns_name));
+        let multi_host_name = any_dns_name().prop_map(Relay::MultiHostName);
+
+        prop_oneof![single_host_addr, single_host_name, multi_host_name].boxed()
     }
 }

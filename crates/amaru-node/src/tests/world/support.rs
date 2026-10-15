@@ -65,22 +65,15 @@ pub(super) fn derive_seed(master: u64, tag: u64) -> u64 {
     z ^ (z >> 31)
 }
 
-pub(super) fn seed_bytes(seed: u64) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    let mut x = seed;
-    for (i, chunk) in out.as_chunks_mut::<8>().0.iter_mut().enumerate() {
-        x = derive_seed(x, i as u64 + 1);
-        *chunk = x.to_le_bytes();
-    }
-    out
-}
-
 /// Hydrate production-graph traces as typed chainsync / header-validation values.
 pub(super) fn fragment_trace_guards() -> amaru_pure_stage::DeserializerGuards {
     let mut guards = amaru_protocols::deserializers::register_deserializers();
     guards.push(register_data_deserializer::<amaru_consensus::stages::track_peers::TrackPeersMsg>().boxed());
     guards.push(register_data_deserializer::<amaru_protocols::chainsync::ChainSyncInitiatorMsg>().boxed());
     guards.push(register_effect_deserializer::<amaru_consensus::effects::ValidateHeaderEffect>().boxed());
+    guards.push(register_effect_deserializer::<amaru_consensus::performance::QueryPeerViewEffect>().boxed());
+    guards.push(register_data_deserializer::<amaru_consensus::performance::PeerView>().boxed());
+    guards.push(register_data_deserializer::<Option<amaru_consensus::performance::PeerView>>().boxed());
     guards
 }
 

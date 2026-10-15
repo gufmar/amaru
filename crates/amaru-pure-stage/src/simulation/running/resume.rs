@@ -17,8 +17,8 @@ use std::mem::replace;
 use anyhow::Context;
 
 use crate::{
-    Instant, Name, ScheduleId, SendData, StageResponse,
-    effect::{CallExtra, CallTimeout, StageEffect, TransitionFactory},
+    Instant, Name, ScheduleId, SendData, StageResponse, TrySend,
+    effect::{CallExtra, CallNotAdmitted, CallTimeout, StageEffect, TransitionFactory},
     sender::StageRefExtra,
     simulation::{
         SimulationRunning,
@@ -32,25 +32,36 @@ use crate::{
 #[error("stage `{0}` terminated by unsupervised child termination")]
 pub struct UnsupervisedChildTermination(pub Name);
 
+/// What [`resume_receive_internal`] took, if it resumed the stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReceiveResume {
+    /// Not waiting on receive, or every ingress queue was empty.
+    Idle,
+    /// Popped the bulk mailbox. One blocked sender may move into the freed slot.
+    Bulk,
+    /// Popped a tombstone, a due timeout, or a priority message. The bulk mailbox is unchanged.
+    Other,
+}
+
 /// Try to resume a receive effect.
 ///
-/// Returns `Ok(true)` if the receive was in fact resumed, `Ok(false)` if the stage was not waiting for a receive effect,
-/// or `Err` if the simulation should be terminated due to a bug or a top-level stage termination.
-pub fn resume_receive_internal(simulation: &mut SimulationRunning, at_stage: &Name) -> anyhow::Result<bool> {
-    let rearm_timeouts = {
+/// `Err` means the simulation should be terminated due to a bug or a top-level stage termination.
+pub fn resume_receive_internal(simulation: &mut SimulationRunning, at_stage: &Name) -> anyhow::Result<ReceiveResume> {
+    let (rearm_timeouts, from_bulk) = {
         let mut rearm_timeouts = false;
         let data = simulation
             .stages
             .get_mut(at_stage)
             .ok_or_else(|| anyhow::anyhow!("stage `{}` was already terminated", at_stage))?;
         let Some(waiting_for) = data.waiting.as_ref() else {
-            return Ok(false);
+            return Ok(ReceiveResume::Idle);
         };
 
         if !matches!(waiting_for, StageEffect::Receive) {
-            return Ok(false);
+            return Ok(ReceiveResume::Idle);
         }
 
+        let mut from_bulk = false;
         let msg = match data.tombstones.pop_front() {
             Some(Ok(msg)) => msg,
             Some(Err(name)) => {
@@ -66,7 +77,7 @@ pub fn resume_receive_internal(simulation: &mut SimulationRunning, at_stage: &Na
                 supervisor.tombstones.push_back(msg);
                 resume_receive_internal(simulation, &supervised_by)
                     .with_context(|| format!("sending tombstone from `{}`", at_stage))?;
-                return Ok(false);
+                return Ok(ReceiveResume::Idle);
             }
             None => {
                 if let Some(msg) = data.timeouts.take_due() {
@@ -78,8 +89,9 @@ pub fn resume_receive_internal(simulation: &mut SimulationRunning, at_stage: &Na
                     msg
                 } else {
                     let Some(msg) = data.mailbox.pop_front() else {
-                        return Ok(false);
+                        return Ok(ReceiveResume::Idle);
                     };
+                    from_bulk = true;
                     msg
                 }
             }
@@ -96,14 +108,14 @@ pub fn resume_receive_internal(simulation: &mut SimulationRunning, at_stage: &Na
         data.state = StageState::Running((data.transition)(state, msg));
 
         simulation.runnable.push_back((data.name.clone(), StageResponse::Unit));
-        rearm_timeouts
+        (rearm_timeouts, from_bulk)
     };
     if rearm_timeouts {
         let now = simulation.clock.now(simulation.global_epoch_offset);
         let data = simulation.stages.get_mut(at_stage).expect("stage was just resumed");
         super::rearm_timeouts(data, &mut simulation.scheduled, &simulation.schedule_ids, now);
     }
-    Ok(true)
+    Ok(if from_bulk { ReceiveResume::Bulk } else { ReceiveResume::Other })
 }
 
 pub fn resume_send_internal(
@@ -180,6 +192,24 @@ pub fn resume_wait_internal(
     Ok(())
 }
 
+pub fn resume_try_send_internal(
+    data: &mut StageData,
+    run: &mut dyn FnMut(Name, StageResponse),
+    to: &Name,
+    outcome: TrySend,
+) -> anyhow::Result<()> {
+    let waiting_for =
+        data.waiting.as_ref().ok_or_else(|| anyhow::anyhow!("stage `{}` was not waiting for any effect", data.name))?;
+
+    if !matches!(waiting_for, StageEffect::TrySend(name, _) if name == to) {
+        anyhow::bail!("stage `{}` was not waiting for a try_send effect to `{to}`, but {:?}", data.name, waiting_for)
+    }
+
+    data.waiting = None;
+    run(data.name.clone(), StageResponse::TrySend(outcome));
+    Ok(())
+}
+
 pub fn resume_call_send_internal(
     sim: &mut SimulationRunning,
     from: Name,
@@ -195,57 +225,62 @@ pub fn resume_call_send_internal(
     };
     let id = *id;
 
-    let real_to = match super::deliver_message(&mut sim.stages, sim.mailbox_size, to.clone(), msg) {
+    // Record admission now. A later wakeup cannot rediscover it: `terminate_stage` may
+    // already have dropped the callee, and with it the parked row.
+    let admitted = match super::deliver_message(&mut sim.stages, to.clone(), msg) {
         DeliverMessageResult::Delivered(data_to) => {
             // `to` may not be suspended on receive, so failure to resume is okay
             let name = data_to.name.clone();
             resume_receive_internal(sim, &name)?;
-            Some(name)
+            true
         }
         DeliverMessageResult::Full(data_to, send_data) => {
             data_to.senders.push_back((from.clone(), send_data));
-            Some(data_to.name.clone())
+            false
         }
         DeliverMessageResult::NotFound => {
             tracing::warn!(stage = %to, "message send to terminated stage dropped");
-            None
+            false
         }
     };
 
-    let ret = real_to.is_some();
-
     sim.schedule_wakeup(id, move |sim| {
+        // Not admitted at schedule time: drop the parked row if the callee is still there.
+        // A message admitted later is already out of `senders`, so this keeps the captured
+        // flag. It also runs when the caller is gone, so a later drain cannot deliver a
+        // request that never entered the mailbox.
+        if !admitted && let Some(data_to) = sim.stages.get_mut(&to) {
+            data_to.senders.retain(|(name, _)| name != &from);
+        }
+        // A slot may have opened after this wakeup was armed. Consume that record even when
+        // the caller is already gone, so the id does not stay in the set.
+        let admitted = admitted || sim.admitted_calls.remove(&id);
         let Some(data_from) = sim.stages.get_mut(&from) else {
             tracing::warn!(name = %from, "stage was terminated, skipping call effect delivery");
             return;
         };
-        let wakeup = resume_call_internal(
+        // The callee dying later does not turn a never-admitted parked request into
+        // `TimedOut`, and it does not pull an admitted request back out.
+        let response = if admitted { CallTimeout::boxed() } else { CallNotAdmitted::boxed() };
+        resume_call_internal(
             data_from,
             &mut |name, response| {
                 sim.runnable.push_back((name, response));
             },
             Some(id),
-            Box::new(CallTimeout),
-        );
-        if wakeup.is_ok()
-            && let Some(real_to) = real_to
-            && let Some(data_to) = sim.stages.get_mut(&real_to)
-        {
-            // here we clean up in case the message was not yet delivered to the mailbox;
-            // no strong reasons on a theoretical level, but it would be confusing if the
-            // caller is woken up later when mailbox capacity frees up
-            data_to.senders.retain(|(name, _)| name != &from);
-        }
+            response,
+        )
+        .ok();
     });
 
-    Ok(ret)
+    Ok(true)
 }
 
 pub fn resume_call_internal(
     data: &mut StageData,
     run: &mut dyn FnMut(Name, StageResponse),
     id: Option<ScheduleId>,
-    msg: Box<dyn SendData>,
+    response: Box<dyn SendData>,
 ) -> anyhow::Result<()> {
     let waiting_for =
         data.waiting.as_ref().ok_or_else(|| anyhow::anyhow!("stage `{}` was not waiting for any effect", data.name))?;
@@ -257,7 +292,7 @@ pub fn resume_call_internal(
     // it is important that all validations (i.e. `?``) happen before this point
     data.waiting = None;
 
-    run(data.name.clone(), StageResponse::CallResponse(msg));
+    run(data.name.clone(), StageResponse::CallResponse(response));
     Ok(())
 }
 
@@ -330,7 +365,7 @@ pub fn resume_wire_stage_internal(
     }
 
     // it is important that all validations (i.e. `?``) happen before this point
-    let Some(StageEffect::WireStage(_, transition, _, _)) = data.waiting.take() else {
+    let Some(StageEffect::WireStage(_, transition, _, _, _)) = data.waiting.take() else {
         panic!("checked above");
     };
 

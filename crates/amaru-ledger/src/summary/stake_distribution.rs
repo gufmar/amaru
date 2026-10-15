@@ -146,7 +146,10 @@ impl StakeSummary {
                         blocks_count: 0,
                         stake: 0,
                         voting_stake: 0,
-                        margin: safe_ratio(row.current_params.margin.numerator, row.current_params.margin.denominator),
+                        margin: safe_ratio(
+                            row.current_params.margin.numerator(),
+                            row.current_params.margin.denominator(),
+                        ),
                         parameters: row.current_params,
                         fallback_drep: None,
                     },
@@ -396,10 +399,7 @@ impl Capacity<usize> {
 pub mod tests {
     use std::collections::BTreeMap;
 
-    use amaru_kernel::{
-        Epoch, Lovelace, any_anchor, any_certificate_pointer, any_credential, any_drep, any_hash28, any_pool_params,
-        safe_ratio,
-    };
+    use amaru_kernel::{Anchor, CertificatePointer, Credential, DRep, Epoch, Lovelace, PoolId, PoolParams, safe_ratio};
     use proptest::{collection, option, prelude::*, prop_compose};
 
     use super::StakeDistribution;
@@ -414,8 +414,8 @@ pub mod tests {
             treasury in any::<u64>(),
             reserves in any::<u64>(),
             active_stake_delta in any::<Lovelace>(),
-            dreps in collection::btree_map(any_drep(), any_drep_state(min_epoch, max_epoch), 1..10),
-            _accounts in collection::btree_map(any_credential(), any_account_state(), 1..20),
+            dreps in collection::btree_map(any::<DRep>(), any_drep_state(min_epoch, max_epoch), 1..10),
+            _accounts in collection::btree_map(any::<Credential>(), any_account_state(), 1..20),
         ) -> StakeDistribution {
             let dreps_voting_stake = dreps.values().fold(0, |total, st| total + st.voting_stake);
 
@@ -441,8 +441,8 @@ pub mod tests {
             epoch in any::<u64>(),
             treasury in any::<u64>(),
             reserves in any::<u64>(),
-            pools in collection::btree_map(any_hash28(), any_pool_state(), 1..10),
-            accounts in collection::btree_map(any_credential(), any_account_state(), 1..20),
+            pools in collection::btree_map(any::<PoolId>(), any_pool_state(), 1..10),
+            accounts in collection::btree_map(any::<Credential>(), any_account_state(), 1..20),
         ) -> StakeDistribution {
             let active_stake = pools.values().fold(0, |total, st| total + st.stake);
             let pools_voting_stake = pools.values().fold(0, |total, st| total + st.voting_stake);
@@ -498,8 +498,8 @@ pub mod tests {
     prop_compose! {
         pub fn any_account_state()(
             balance in any::<Lovelace>(),
-            pool in option::of(any_hash28()),
-            drep in option::of(any_drep()),
+            pool in option::of(any::<PoolId>()),
+            drep in option::of(any::<DRep>()),
         ) -> AccountState {
             AccountState {
                 balance,
@@ -512,16 +512,16 @@ pub mod tests {
 
     prop_compose! {
         pub fn any_pool_state()(
-            registered_at in any_certificate_pointer(u64::MAX),
+            registered_at in any::<CertificatePointer>(),
             blocks_count in any::<u64>(),
             stake in 0_u64..1_000_000_000_000,
             voting_stake in 0_u64..1_000_000_000_000,
-            parameters in any_pool_params(),
-            fallback_drep in option::of(any_drep()),
+            parameters in any::<PoolParams>(),
+            fallback_drep in option::of(any::<DRep>()),
         ) -> PoolState {
             let margin = safe_ratio(
-                parameters.margin.numerator,
-                parameters.margin.denominator,
+                parameters.margin.numerator(),
+                parameters.margin.denominator(),
             );
 
             PoolState {
@@ -542,9 +542,9 @@ pub mod tests {
             max_epoch: u64,
         )(
             valid_until in min_epoch..=max_epoch,
-            metadata in option::of(any_anchor()),
+            metadata in option::of(any::<Anchor>()),
             voting_stake in 0_u64..1_000_000_000_000,
-            registered_at in any_certificate_pointer(u64::MAX),
+            registered_at in any::<CertificatePointer>(),
         ) -> DRepState {
             DRepState {
                 valid_until: Some(Epoch::from(valid_until)),

@@ -14,9 +14,12 @@
 
 use std::fmt;
 
+#[cfg(any(test, feature = "test-utils"))]
+use proptest::prelude::{Arbitrary, BoxedStrategy, Strategy, any};
+
 use crate::{RationalNumber, cbor};
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, cbor::Encode, cbor::Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, cbor::Encode)]
 #[cbor(context_bound = "crate::cbor::HasProtocolVersion")]
 pub struct ExUnitPrices {
     #[n(0)]
@@ -26,8 +29,29 @@ pub struct ExUnitPrices {
     pub step_price: RationalNumber,
 }
 
+/// Decoded as a fixed-size record, so indefinite-length encodings are rejected before protocol version V12.
+impl<'b, C: cbor::HasProtocolVersion> cbor::Decode<'b, C> for ExUnitPrices {
+    fn decode(d: &mut cbor::Decoder<'b>, ctx: &mut C) -> Result<Self, cbor::decode::Error> {
+        cbor::heterogeneous_array_v12(d, ctx, 2, |d, ctx| {
+            Ok(ExUnitPrices { mem_price: d.decode_with(ctx)?, step_price: d.decode_with(ctx)? })
+        })
+    }
+}
+
 impl fmt::Display for ExUnitPrices {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{{mem={}, cpu={}}}", self.mem_price, self.step_price)
+    }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl Arbitrary for ExUnitPrices {
+    type Parameters = ();
+    type Strategy = BoxedStrategy<Self>;
+
+    fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
+        (any::<RationalNumber>(), any::<RationalNumber>())
+            .prop_map(|(mem_price, step_price)| ExUnitPrices { mem_price, step_price })
+            .boxed()
     }
 }

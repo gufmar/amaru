@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use amaru_minicbor_extra::{decode_bigint, encode_bigint, encode_bytestring};
+use amaru_minicbor_extra::{
+    assert_bounded_chunk, decode_bounded_integer, decode_integer, encode_bytestring, encode_integer,
+    heterogeneous_array,
+};
 use bumpalo::collections::Vec as BumpVec;
 use minicbor::data::{IanaTag, Tag};
 use stacksafe::stacksafe;
@@ -60,15 +63,8 @@ impl<'a, 'b> minicbor::decode::Decode<'b, SimpleCtx<'a>> for &'a PlutusData<'a> 
 
                             Ok(data)
                         }
-                        102 => {
-                            let mut fields = BumpVec::new_in(ctx.arena.as_bump());
-
-                            let count = decoder.array()?;
-                            if count != Some(2) {
-                                return Err(minicbor::decode::Error::message(
-                                    "expected array of length 2 following plutus data tag 102",
-                                ));
-                            }
+                        102 => heterogeneous_array(decoder, |decoder, assert_len| {
+                            assert_len(2)?;
 
                             let discriminator_i128: i128 = decoder.int()?.into();
                             let discriminator: u64 = match u64::try_from(discriminator_i128) {
@@ -80,16 +76,15 @@ impl<'a, 'b> minicbor::decode::Decode<'b, SimpleCtx<'a>> for &'a PlutusData<'a> 
                                 }
                             };
 
+                            let mut fields = BumpVec::new_in(ctx.arena.as_bump());
                             for x in decoder.array_iter_with(ctx)? {
                                 fields.push(x?);
                             }
 
                             let fields = ctx.arena.alloc(fields);
 
-                            let data = PlutusData::constr(ctx.arena, discriminator, fields);
-
-                            Ok(data)
-                        }
+                            Ok(PlutusData::constr(ctx.arena, discriminator, fields))
+                        }),
                         _ => {
                             let e =
                                 minicbor::decode::Error::message(format!("unknown tag for plutus data tag: {tag}",));
@@ -101,7 +96,7 @@ impl<'a, 'b> minicbor::decode::Decode<'b, SimpleCtx<'a>> for &'a PlutusData<'a> 
 
                 match tag.try_into() {
                     Ok(IanaTag::PosBignum | IanaTag::NegBignum) => {
-                        let integer = ctx.arena.alloc_integer(decode_bigint(decoder)?);
+                        let integer = ctx.arena.alloc_integer(decode_bounded_integer(decoder)?);
 
                         Ok(PlutusData::integer(ctx.arena, integer))
                     }
@@ -131,6 +126,7 @@ impl<'a, 'b> minicbor::decode::Decode<'b, SimpleCtx<'a>> for &'a PlutusData<'a> 
 
                 for chunk in decoder.bytes_iter()? {
                     let chunk = chunk?;
+                    assert_bounded_chunk(chunk)?;
 
                     bs.extend_from_slice(chunk);
                 }
@@ -159,7 +155,7 @@ impl<'a, 'b> minicbor::decode::Decode<'b, SimpleCtx<'a>> for &'a PlutusData<'a> 
             | minicbor::data::Type::I32
             | minicbor::data::Type::I64
             | minicbor::data::Type::Int => {
-                let integer = ctx.arena.alloc_integer(decode_bigint(decoder)?);
+                let integer = ctx.arena.alloc_integer(decode_integer(decoder)?);
 
                 Ok(PlutusData::integer(ctx.arena, integer))
             }
@@ -233,7 +229,7 @@ impl<C> minicbor::encode::Encode<C> for PlutusData<'_> {
                 }
             }
             PlutusData::Integer(n) => {
-                encode_bigint(e, n)?;
+                encode_integer(e, n)?;
             }
             // we match the haskell implementation by encoding bytestrings longer than 64
             // bytes as indefinite lists of bytes
@@ -259,8 +255,13 @@ impl<C> minicbor::encode::Encode<C> for PlutusData<'_> {
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
-    use crate::arena::Arena;
+    use crate::{
+        arena::Arena,
+        constant::{Integer, integer_from_bytes},
+    };
 
     #[test]
     fn encode_empty_record() {
@@ -282,8 +283,8 @@ mod tests {
 
     #[test]
     fn encode_record_integer() {
-        let zero = num::BigInt::from(0);
-        let one = num::BigInt::from(1);
+        let zero = Integer::from(0);
+        let one = Integer::from(1);
         let d = PlutusData::Constr { tag: 128, fields: &[&PlutusData::Integer(&zero), &PlutusData::Integer(&one)] };
         let mut v = vec![];
         minicbor::encode(d, &mut v).expect("invalid PlutusData");
@@ -292,7 +293,7 @@ mod tests {
 
     #[test]
     fn encode_cbor_data_bigint() {
-        let big = num::BigInt::from_bytes_be(num_bigint::Sign::Plus, &hex::decode("033b2e3c9fd0803ce7ffffff").unwrap());
+        let big = integer_from_bytes(&hex::decode("033b2e3c9fd0803ce7ffffff").unwrap(), true);
         let d = PlutusData::Constr { tag: 0, fields: &[&PlutusData::Integer(&big)] };
         let mut v = vec![];
         minicbor::encode(d, &mut v).expect("invalid PlutusData");
@@ -301,8 +302,7 @@ mod tests {
 
     #[test]
     fn encode_cbor_data_negative_bigint() {
-        let n = -num::BigInt::from_bytes_be(num_bigint::Sign::Plus, &hex::decode("033b2e3c9fd0803ce7ffffff").unwrap())
-            - num::BigInt::from(1);
+        let n = -integer_from_bytes(&hex::decode("033b2e3c9fd0803ce7ffffff").unwrap(), true) - Integer::from(1);
         let d = PlutusData::Constr { tag: 0, fields: &[&PlutusData::Integer(&n)] };
         let mut v = vec![];
         minicbor::encode(d, &mut v).expect("invalid PlutusData");
@@ -314,16 +314,13 @@ mod tests {
         let cbor = hex::decode("c34c033b2e3c9fd0803ce7ffffff").unwrap();
         let arena = Arena::new();
         let decoded = PlutusData::from_cbor(&arena, &cbor).expect("failed to decode negative bigint");
-        let expected =
-            -num::BigInt::from_bytes_be(num_bigint::Sign::Plus, &hex::decode("033b2e3c9fd0803ce7ffffff").unwrap())
-                - num::BigInt::from(1);
+        let expected = -integer_from_bytes(&hex::decode("033b2e3c9fd0803ce7ffffff").unwrap(), true) - Integer::from(1);
         assert_eq!(decoded, &PlutusData::Integer(&expected));
     }
 
     #[test]
     fn roundtrip_cbor_data_negative_bigint() {
-        let n = -num::BigInt::from_bytes_be(num_bigint::Sign::Plus, &hex::decode("033b2e3c9fd0803ce7ffffff").unwrap())
-            - num::BigInt::from(1);
+        let n = -integer_from_bytes(&hex::decode("033b2e3c9fd0803ce7ffffff").unwrap(), true) - Integer::from(1);
         let encoded = minicbor::to_vec(PlutusData::Integer(&n)).expect("encode failed");
         let arena = Arena::new();
         let decoded = PlutusData::from_cbor(&arena, &encoded).expect("decode failed");
@@ -333,9 +330,9 @@ mod tests {
     /// Test that the encoding is correct at both 2^64 - 1 and -2^64
     #[test]
     fn encode_integer_word_boundaries() {
-        let one = num::BigInt::from(1);
-        let two_64: num::BigInt = num::BigInt::from(1) << 64;
-        let two_64_minus_one: num::BigInt = &two_64 - &one;
+        let one = Integer::from(1);
+        let two_64: Integer = Integer::from(1) << 64;
+        let two_64_minus_one: Integer = &two_64 - &one;
 
         // Largest values still encoded as native CBOR integers.
         assert_eq!(encode_integer_hex(&two_64_minus_one), "1bffffffffffffffff");
@@ -351,7 +348,7 @@ mod tests {
 
     #[test]
     fn roundtrip_integer_min_native() {
-        let two_64: num::BigInt = num::BigInt::from(1) << 64;
+        let two_64: Integer = Integer::from(1) << 64;
         let n = -two_64;
         let encoded = minicbor::to_vec(PlutusData::Integer(&n)).expect("encode failed");
         let arena = Arena::new();
@@ -361,8 +358,8 @@ mod tests {
 
     #[test]
     fn encode_cbor_data_list() {
-        let zero = num::BigInt::from(0);
-        let one = num::BigInt::from(1);
+        let zero = Integer::from(0);
+        let one = Integer::from(1);
         let list = [&PlutusData::Integer(&zero), &PlutusData::Integer(&one)];
         let d = PlutusData::Constr { tag: 0, fields: &[&PlutusData::List(&list)] };
         let mut v = vec![];
@@ -372,10 +369,42 @@ mod tests {
 
     // HELPERS
 
-    /// Encode a BigInt as hex-encoded CBOR
-    fn encode_integer_hex(n: &num::BigInt) -> String {
+    /// Encode an Integer as hex-encoded CBOR.
+    fn encode_integer_hex(n: &Integer) -> String {
         let mut v = vec![];
         minicbor::encode(PlutusData::Integer(n), &mut v).expect("invalid PlutusData");
         hex::encode(v)
+    }
+
+    /// A definite-length byte string header for `len` bytes, followed by `len` zeroes.
+    fn bytes(len: usize) -> Vec<u8> {
+        [vec![0x58, len as u8], vec![0x00; len]].concat()
+    }
+
+    /// Plutus bounds each leaf byte string of a `Data` to 64 bytes on the wire, per chunk: a
+    /// longer value is legal only when split into chunks of at most that size.
+    /// See *Note [The 64-byte limit]* in `PlutusCore.Data`.
+    #[test_case(bytes(64)                                              => matches Ok(_)  ; "definite at the limit")]
+    #[test_case(bytes(65)                                              => matches Err(_) ; "definite one byte over")]
+    #[test_case([vec![0x5f], bytes(64), bytes(64), vec![0xff]].concat() => matches Ok(_)  ; "two chunks at the limit")]
+    #[test_case([vec![0x5f], bytes(65), vec![0xff]].concat()            => matches Err(_) ; "a chunk one byte over")]
+    #[test_case([vec![0xc2], bytes(65)].concat()                        => matches Err(_) ; "bignum payload over the limit")]
+    #[test_case([vec![0xc2], bytes(64)].concat()                        => matches Ok(_)  ; "bignum payload at the limit")]
+    fn decode_bounds_byte_strings_per_chunk(cbor: Vec<u8>) -> Result<(), String> {
+        let arena = Arena::new();
+        PlutusData::from_cbor(&arena, &cbor).map(|_| ()).map_err(|e| e.to_string())
+    }
+
+    /// Plutus reads the tag-102 pair with `decodeListLenOrIndef`, so both array forms are legal;
+    /// the indefinite one must break right after the two elements.
+    /// `d8 66` is tag 102, `00` the discriminator, `80`/`9fff` the empty argument list.
+    #[test_case(&[0xd8, 0x66, 0x82, 0x00, 0x80]                   => matches Ok(_)  ; "definite pair")]
+    #[test_case(&[0xd8, 0x66, 0x9f, 0x00, 0x80, 0xff]             => matches Ok(_)  ; "indefinite pair")]
+    #[test_case(&[0xd8, 0x66, 0x9f, 0x00, 0x80, 0x80, 0xff]       => matches Err(_) ; "indefinite with a third element")]
+    #[test_case(&[0xd8, 0x66, 0x83, 0x00, 0x80, 0x80]             => matches Err(_) ; "definite with three elements")]
+    #[test_case(&[0xd8, 0x66, 0x81, 0x00]                         => matches Err(_) ; "definite with one element")]
+    fn decode_tag_102_accepts_both_array_forms(cbor: &[u8]) -> Result<(), String> {
+        let arena = Arena::new();
+        PlutusData::from_cbor(&arena, cbor).map(|_| ()).map_err(|e| e.to_string())
     }
 }

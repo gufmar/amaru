@@ -22,13 +22,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use amaru_consensus::{
-    performance::PeerMix,
-    stages::{
-        forge_block::ForgingCredentials,
-        peer_selection::{SHARE_REQUEST_INITIAL_DELAY, SHARE_REQUEST_INTERVAL},
-    },
-};
+use amaru_consensus::{performance::PeerMix, stages::forge_block::ForgingCredentials};
 use amaru_kernel::{
     ConsensusParameters, EraHistory, GlobalParameters, NetworkMagic, NetworkName, PREPROD_ERA_HISTORY,
     PREPROD_GLOBAL_PARAMETERS, Peer, PeerCandidate,
@@ -36,12 +30,15 @@ use amaru_kernel::{
 use amaru_mempool::MempoolConfig;
 use amaru_metrics::Meter;
 use amaru_ouroboros::ChainStore;
-use amaru_protocols::tx_submission::ResponderParams;
+use amaru_protocols::{
+    peer_sharing::{SHARE_REQUEST_INITIAL_DELAY, SHARE_REQUEST_INTERVAL},
+    tx_submission::ResponderParams,
+};
 use amaru_pure_stage::Instant;
 use amaru_stores::rocksdb::RocksDbConfig;
 use anyhow::Context;
 
-use crate::{DEFAULT_DOWNSTREAM_PEERS, DEFAULT_PEER_REMOVAL_COOLDOWN_SECS, DEFAULT_UPSTREAM_PEERS};
+use crate::{DEFAULT_PEER_REMOVAL_COOLDOWN, DEFAULT_PEERS_MAX_DOWNSTREAM, DEFAULT_PEERS_MAX_UPSTREAM};
 
 /// Configuration for the Amaru node, including storage options, network settings, and other parameters.
 ///
@@ -51,7 +48,7 @@ pub struct Config {
     pub ledger_config: LedgerConfig,
     pub chain_store: StoreType<Arc<dyn ChainStore>>,
     pub upstream_peers: Vec<String>,
-    /// Big-ledger relays from a Cardano peer snapshot file (`--peer-snapshot`).
+    /// Big-ledger relays from a Cardano peer snapshot file (`--peers-snapshot`).
     pub peer_snapshot_peers: BTreeSet<Peer>,
     /// Snapshot relays that still need DNS (hostname or SRV).
     pub peer_snapshot_unresolved: BTreeSet<PeerCandidate>,
@@ -61,11 +58,12 @@ pub struct Config {
     pub peer_mix: PeerMix,
     pub network_magic: NetworkMagic,
     pub listen_address: String,
+    pub bind_outbound_to_listen_port: bool,
     pub migrate_chain_db: bool,
     pub submit_api_address: Option<String>,
 
-    /// After a misbehaving upstream peer is removed, do not allow it to be re-added for this many seconds.
-    pub peer_removal_cooldown_secs: u64,
+    /// After a misbehaving upstream peer is removed, do not allow it to be re-added for this duration.
+    pub peer_removal_cooldown: Duration,
 
     /// Maximum distance (in block height) below the adopted tip for which `block_source` retains provenance.
     pub block_source_max_tip_distance: u64,
@@ -161,14 +159,15 @@ impl Default for Config {
             upstream_peers: vec![],
             peer_snapshot_peers: BTreeSet::new(),
             peer_snapshot_unresolved: BTreeSet::new(),
-            target_upstream_peers: DEFAULT_UPSTREAM_PEERS,
-            target_downstream_peers: DEFAULT_DOWNSTREAM_PEERS,
+            target_upstream_peers: DEFAULT_PEERS_MAX_UPSTREAM,
+            target_downstream_peers: DEFAULT_PEERS_MAX_DOWNSTREAM,
             peer_mix: PeerMix::default(),
             network_magic: NetworkMagic::PREPROD,
             listen_address: "0.0.0.0:3000".to_string(),
+            bind_outbound_to_listen_port: true,
             migrate_chain_db: false,
             submit_api_address: None,
-            peer_removal_cooldown_secs: DEFAULT_PEER_REMOVAL_COOLDOWN_SECS,
+            peer_removal_cooldown: DEFAULT_PEER_REMOVAL_COOLDOWN,
             block_source_max_tip_distance: 2_500,
             trace_buffer_min_entries: 0,
             trace_buffer_max_size: 0,

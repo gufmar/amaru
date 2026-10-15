@@ -92,12 +92,10 @@ pub enum StoreError {
     #[error(
         "{}",
         if .0.is_locked() {
-            "Failed to connect to the ledger store because it is locked. Another Amaru \
-            process may still be using it, or a stale LOCK file may remain after an \
-            unclean shutdown. Stop any process using the ledger database before retrying; \
-            only remove the LOCK file after confirming no process is using it."
+            "Failed to connect to the ledger store because it is locked. Stop any process \
+            using the ledger database before retrying"
         } else {
-            "Failed to create ledger. Did you bootstrap your node?"
+            "Failed to open the ledger store. If it is missing, did you bootstrap your node?"
         }
     )]
     Open(#[source] OpenErrorKind),
@@ -839,26 +837,26 @@ pub struct Columns<U, P, A, D, C, PP, V> {
     pub votes: V,
 }
 
-impl<U, P, A, D, C, PP, V> Default
+impl<'u, 'p, 'a, 'd, 'c, 'pp, 'v, U: 'u, P: 'p, A: 'a, D: 'd, C: 'c, PP: 'pp, V: 'v> Default
     for Columns<
-        iter::Empty<U>,
-        iter::Empty<P>,
-        iter::Empty<A>,
-        iter::Empty<D>,
-        iter::Empty<C>,
-        iter::Empty<PP>,
-        iter::Empty<V>,
+        Box<dyn Iterator<Item = U> + 'u>,
+        Box<dyn Iterator<Item = P> + 'p>,
+        Box<dyn Iterator<Item = A> + 'a>,
+        Box<dyn Iterator<Item = D> + 'd>,
+        Box<dyn Iterator<Item = C> + 'c>,
+        Box<dyn Iterator<Item = PP> + 'pp>,
+        Box<dyn Iterator<Item = V> + 'v>,
     >
 {
     fn default() -> Self {
         Self {
-            utxo: iter::empty(),
-            pools: iter::empty(),
-            accounts: iter::empty(),
-            dreps: iter::empty(),
-            cc_members: iter::empty(),
-            proposals: iter::empty(),
-            votes: iter::empty(),
+            utxo: Box::new(iter::empty()),
+            pools: Box::new(iter::empty()),
+            accounts: Box::new(iter::empty()),
+            dreps: Box::new(iter::empty()),
+            cc_members: Box::new(iter::empty()),
+            proposals: Box::new(iter::empty()),
+            votes: Box::new(iter::empty()),
         }
     }
 }
@@ -894,16 +892,21 @@ mod tests {
     #[test]
     fn better_context_on_open_locked() {
         let error = StoreError::Open(OpenErrorKind::locked(PathBuf::from("db/live"), anyhow!("lock held")));
-        let message = format!("{error:#}");
+        let message = format!("{:#}", anyhow::Error::new(error));
         assert!(message.contains("Failed to connect to the ledger store because it is locked"));
+        assert_eq!(message.matches("lock held").count(), 1);
+        assert_eq!(message.matches("db/live").count(), 1);
+        assert!(!message.contains("remove the LOCK file"));
         assert!(!message.contains("Did you bootstrap your node?"));
     }
 
     #[test]
     fn suggest_bootstrap_on_open_error() {
         let error = StoreError::Open(OpenErrorKind::io_with_file(PathBuf::from("db/live"), io::Error::other("foo")));
-        let message = format!("{error:#}");
+        let message = format!("{:#}", anyhow::Error::new(error));
         assert!(!message.contains("Failed to connect to the ledger store because it is locked"));
-        assert!(message.contains("Did you bootstrap your node?"));
+        assert!(message.contains("If it is missing, did you bootstrap your node?"));
+        assert_eq!(message.matches("foo").count(), 1);
+        assert_eq!(message.matches("db/live").count(), 1);
     }
 }

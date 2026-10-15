@@ -37,6 +37,7 @@
 use std::{env, sync::Arc};
 
 use amaru_metrics::{METRICS_METER_NAME, Meter};
+use amaru_progress_bar::{ProgressLogWriter, progress_log_writer};
 use anyhow::{Context, anyhow};
 use opentelemetry::{KeyValue, metrics::MeterProvider as _, trace::TracerProvider as _};
 use opentelemetry_sdk::Resource;
@@ -50,15 +51,17 @@ use tracing_subscriber::{
 use crate::{
     observability::{
         CborConsoleEventFormat, CborJsonEventFormat, CborJsonFields, CborJsonSpanLayer, CborOtelLogBridge,
-        CborTraceArrayLayer, console_field_formatter,
+        CborTraceArrayLayer, SpanDurationLayer, console_field_formatter,
     },
     system_metrics::{BuildIdentity, track_system_metrics},
 };
 
 mod open_telemetry;
 
+#[cfg(test)]
+pub(crate) use open_telemetry::NotingSpanProcessor;
 pub use open_telemetry::{
-    BuildOpenTelemetryProvidersError, OpenTelemetryProviders, OtelSignal, OtelSignals,
+    BuildOpenTelemetryProvidersError, CborSpanExporter, OpenTelemetryProviders, OtelSignal, OtelSignals,
     ShutdownOpenTelemetryProvidersError,
 };
 
@@ -201,6 +204,7 @@ impl Telemetry {
             Self::accept_already_set(
                 tracing_subscriber::registry()
                     .with(otel_layer)
+                    .with(SpanDurationLayer::new())
                     .with(CborTraceArrayLayer::new())
                     .with(log_bridge)
                     .with(CborJsonSpanLayer::new())
@@ -212,6 +216,7 @@ impl Telemetry {
             Self::accept_already_set(
                 tracing_subscriber::registry()
                     .with(otel_layer)
+                    .with(SpanDurationLayer::new())
                     .with(CborTraceArrayLayer::new())
                     .with(log_bridge)
                     .with(console_fmt_layer(std::io::stderr, format.ansi()).with_filter(fmt_filter))
@@ -267,6 +272,7 @@ fn init_fmt_subscriber(format: LogFormat) -> anyhow::Result<()> {
     if format.is_json() {
         Telemetry::accept_already_set(
             tracing_subscriber::registry()
+                .with(SpanDurationLayer::new())
                 .with(CborJsonSpanLayer::new())
                 .with(json_fmt_layer(std::io::stdout).with_filter(filter))
                 .try_init(),
@@ -275,7 +281,11 @@ fn init_fmt_subscriber(format: LogFormat) -> anyhow::Result<()> {
     } else {
         Telemetry::accept_already_set(
             tracing_subscriber::registry()
-                .with(console_fmt_layer(std::io::stderr, format.ansi()).with_filter(filter))
+                .with(SpanDurationLayer::new())
+                .with(
+                    console_fmt_layer(progress_log_writer as fn() -> ProgressLogWriter, format.ansi())
+                        .with_filter(filter),
+                )
                 .try_init(),
             "init fmt tracing subscriber",
         )?;

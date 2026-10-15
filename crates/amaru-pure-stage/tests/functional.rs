@@ -168,7 +168,7 @@ fn call_then_terminate() {
             let response = eff.call(&state, dur(1000), move |cr| CallMsg(msg, cr)).await;
             if let Some(_value) = response {
                 // We received a response, now terminate
-                return eff.terminate().await;
+                eff.terminate().await;
             }
             state
         });
@@ -242,12 +242,13 @@ fn scheduling() {
     fn graph(builder: &mut impl StageGraph) {
         let trigger = builder.stage("trigger", async |id: Option<ScheduleId>, msg: u32, eff| match msg {
             0 => {
-                // A large enough delay ensures that those delays won't be effectively passed
-                // when we effectively schedule them with the tokio runtime.
-                // Otherwise they might trigger in the wrong expected order.
-                eff.schedule_after(3, dur(3)).await;
-                let id = eff.schedule_after(2, dur(2)).await;
-                eff.schedule_after(1, dur(1)).await;
+                // Message 1 has to be handled, and message 2 cancelled, before message 2's
+                // deadline. A few milliseconds is not enough on a busy runner: the later timer
+                // is already ingress, cancel returns false, and message 2 is still delivered.
+                // Message 2 stays due before message 3 so a missed cancel fails the test.
+                eff.schedule_after(3, dur(1_200)).await;
+                let id = eff.schedule_after(2, dur(800)).await;
+                eff.schedule_after(1, dur(100)).await;
                 Some(id)
             }
             1 => {
@@ -263,9 +264,9 @@ fn scheduling() {
         builder.preload(trigger, [0]).unwrap();
     }
     let schedule_ids = ScheduleIds::default();
-    let schedule_id_1 = schedule_ids.next_at(Instant::at_offset(dur(3), Duration::ZERO));
-    let schedule_id_2 = schedule_ids.next_at(Instant::at_offset(dur(2), Duration::ZERO));
-    let schedule_id_3 = schedule_ids.next_at(Instant::at_offset(dur(1), Duration::ZERO));
+    let schedule_id_1 = schedule_ids.next_at(Instant::at_offset(dur(1_200), Duration::ZERO));
+    let schedule_id_2 = schedule_ids.next_at(Instant::at_offset(dur(800), Duration::ZERO));
+    let schedule_id_3 = schedule_ids.next_at(Instant::at_offset(dur(100), Duration::ZERO));
 
     let expected = {
         [
@@ -391,7 +392,7 @@ fn supervision() {
                 // always terminates before the simulation ends--this termination is an important
                 // aspect of the test.
                 eff.wait(Duration::from_millis(500)).await;
-                return eff.terminate().await;
+                eff.terminate().await;
             }
         });
         let trigger = builder.wire_up(trigger, ());

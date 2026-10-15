@@ -18,6 +18,7 @@ use amaru_kernel::{
     ConsensusParameters, Epoch, EraHistory, Header, HeaderHash, IsHeader, NetworkName, Peer, Point, make_header,
     num::CheckedSub,
 };
+use amaru_observability::TraceContext;
 use amaru_ouroboros::ConnectionId;
 use amaru_ouroboros_traits::{
     BaseReadChainStore, MockBlockValidator, Nonces, PoolSummaries, WriteChainStore, has_stake_pools::MockHasStakePools,
@@ -66,14 +67,6 @@ pub fn height_recheck_schedule_id() -> ScheduleId {
     ScheduleIds::default().next_at(when)
 }
 
-pub fn schedule_id_at(delay_from_sim_start: Duration) -> ScheduleId {
-    let when = Instant::at_offset(
-        Duration::from_secs(SIM_INITIAL_CLOCK_SECS) + delay_from_sim_start,
-        start_in_era().relative_time,
-    );
-    ScheduleIds::default().next_at(when)
-}
-
 pub fn te_schedule(
     at_stage: impl AsRef<str>,
     msg: impl amaru_pure_stage::SendData,
@@ -84,10 +77,6 @@ pub fn te_schedule(
         msg: Box::new(msg),
         id: schedule_id,
     })
-}
-
-pub fn te_clock(instant: Instant) -> TraceEntry {
-    TraceEntry::Clock(instant)
 }
 
 pub fn build_store(headers: &[Header]) -> Arc<InMemoryChainStore> {
@@ -217,19 +206,23 @@ pub fn te_record_header_announcement(
 }
 
 /// Performance effect recorded for a header rejected on reception.
-pub fn te_header_rejected(outcome: &str) -> TraceEntry {
-    use crate::performance::HeaderLifecycleOutcome as O;
-    let outcome = match outcome {
+///
+/// The effect also carries the peer, hash, and error text. Those vary by header, so the matcher
+/// checks the outcome.
+pub fn te_header_rejected(outcome: &str) -> amaru_pure_stage::TraceMatch<'static> {
+    use crate::performance::{HeaderLifecycleOutcome as O, RecordHeaderRejectedEffect};
+    let expected = match outcome {
         "invalid header" => O::InvalidHeader,
         "duplicate header" => O::DuplicateHeader,
         "undecodable header" => O::UndecodableHeader,
         "store header error" => O::StoreHeaderError,
         other => panic!("unknown header rejection outcome in test: {other}"),
     };
-    TraceEntry::suspend(Effect::external(
+    amaru_pure_stage::tm_external_effect_match(
         "tp-1",
-        Box::new(crate::performance::Performance::record_header_rejected(outcome)),
-    ))
+        move |effect: &RecordHeaderRejectedEffect| effect.outcome == expected,
+        amaru_pure_stage::Detached::No,
+    )
 }
 
 /// Slot-start → header reception interval matching [`TrackPeers`] test era history.
@@ -247,7 +240,7 @@ pub fn tm_volatile_tip(at_stage: &str) -> TraceMatch<'static> {
 }
 
 pub fn new_tip(tip: Point, parent: Point) -> NewTip {
-    NewTip { tip, parent, trace_context: Default::default() }
+    NewTip { tip, parent, trace_context: TraceContext::detached(), forward_context: TraceContext::detached() }
 }
 
 fn register_guards() -> DeserializerGuards {
@@ -275,10 +268,15 @@ fn register_guards() -> DeserializerGuards {
         amaru_pure_stage::register_effect_deserializer::<crate::effects::QueryConsensusModeEffect>().boxed(),
         amaru_pure_stage::register_effect_deserializer::<crate::performance::SyncAdoptionPaceEffect>().boxed(),
         amaru_pure_stage::register_effect_deserializer::<crate::performance::RecordHeaderAnnouncementEffect>().boxed(),
+        amaru_pure_stage::register_effect_deserializer::<crate::performance::OpenHeaderForwardEffect>().boxed(),
         amaru_pure_stage::register_effect_deserializer::<crate::performance::RecordHeaderRejectedEffect>().boxed(),
         amaru_pure_stage::register_effect_deserializer::<crate::performance::RecordIntersectionEffect>().boxed(),
         amaru_pure_stage::register_effect_deserializer::<crate::performance::RecordRollbackEffect>().boxed(),
         amaru_pure_stage::register_effect_deserializer::<crate::performance::ClearPeerAvailabilityEffect>().boxed(),
+        amaru_pure_stage::register_effect_deserializer::<
+            amaru_protocols::peer_tracking_effects::RecordUninterestingEffect,
+        >()
+        .boxed(),
         amaru_pure_stage::register_effect_deserializer::<amaru_protocols::metrics_effects::RecordMetricsEffect>()
             .boxed(),
     ]
@@ -302,6 +300,24 @@ pub fn te_clear_peer_availability(at_stage: &str, peer: Peer) -> TraceEntry {
     ))
 }
 
+pub fn te_record_uninteresting(
+    at_stage: &str,
+    peer: Peer,
+    conn_id: ConnectionId,
+    after_rollback: bool,
+    at: Instant,
+) -> TraceEntry {
+    TraceEntry::suspend(Effect::external(
+        at_stage,
+        Box::new(amaru_protocols::peer_tracking_effects::RecordUninterestingEffect {
+            peer,
+            conn_id,
+            after_rollback,
+            at,
+        }),
+    ))
+}
+
 pub fn setup(
     rt: &Handle,
     state: TrackPeers,
@@ -315,8 +331,8 @@ pub fn setup(
     })
 }
 
-/// Forces a specific ledger-applied tip and stops when the sim first sleeps on a scheduled
-/// wakeup (does not auto-advance time). Safe for frozen-height defer tests that arm a recheck
+/// Forces a specific ledger-applied tip, elapses sampled effect durations, and stops at the
+/// first stage timer without firing it. Safe for frozen-height defer tests that arm a recheck
 /// timer without running an infinite height-poll loop.
 pub fn setup_with_ledger_tip_until_sleeping(
     rt: &Handle,
@@ -366,7 +382,7 @@ fn setup_inner(
 ) -> (SimulationRunning, DeserializerGuards, Logs) {
     use amaru_pure_stage::StageGraph;
 
-    let mode = if advance_wakeups { SimulationRunMode::UntilBlocked } else { SimulationRunMode::UntilSleeping };
+    let mode = if advance_wakeups { SimulationRunMode::UntilBlocked } else { SimulationRunMode::UntilStageTimer };
     run_simulation_with(
         rt,
         register_guards(),
@@ -377,9 +393,10 @@ fn setup_inner(
             network
         },
         |resources| {
-            resources.put::<crate::performance::ResourcePerformance>(std::sync::Arc::new(
-                crate::performance::Performance::new(),
-            ));
+            let performance = std::sync::Arc::new(crate::performance::Performance::new());
+            resources.put::<crate::performance::ResourcePerformance>(performance.clone());
+            let tracking: amaru_ouroboros::PeerTrackingResource = performance;
+            resources.put::<amaru_ouroboros::PeerTrackingResource>(tracking);
             resources.put::<ResourceHeaderStore>(store.clone());
             let block_validation = Arc::new(MockBlockValidator::new(store.get_best_chain_tip()));
             resources.put::<ResourceBlockValidation>(block_validation.clone());

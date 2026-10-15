@@ -55,24 +55,24 @@ pub fn voting_threshold(
             )
         }
 
-        ProposalEnum::HardFork(..) => Some(into_safe_ratio(&voting_thresholds.hard_fork_initiation)),
+        ProposalEnum::HardFork(..) => Some(into_safe_ratio(voting_thresholds.hard_fork_initiation.as_ratio())),
 
         ProposalEnum::ConstitutionalCommittee(ConstitutionalCommitteeUpdate::NoConfidence, _) => {
-            Some(into_safe_ratio(&voting_thresholds.motion_no_confidence))
+            Some(into_safe_ratio(voting_thresholds.motion_no_confidence.as_ratio()))
         }
 
         ProposalEnum::ConstitutionalCommittee(ConstitutionalCommitteeUpdate::ChangeMembers { .. }, _) => {
             Some(into_safe_ratio(if is_state_of_no_confidence {
-                &voting_thresholds.committee_no_confidence
+                voting_thresholds.committee_no_confidence.as_ratio()
             } else {
-                &voting_thresholds.committee_normal
+                voting_thresholds.committee_normal.as_ratio()
             }))
         }
 
-        ProposalEnum::Constitution(..) => Some(into_safe_ratio(&voting_thresholds.update_constitution)),
+        ProposalEnum::Constitution(..) => Some(into_safe_ratio(voting_thresholds.update_constitution.as_ratio())),
 
         ProposalEnum::Orphan(OrphanProposal::TreasuryWithdrawal { .. }) => {
-            Some(into_safe_ratio(&voting_thresholds.treasury_withdrawal))
+            Some(into_safe_ratio(voting_thresholds.treasury_withdrawal.as_ratio()))
         }
     }
 }
@@ -87,7 +87,7 @@ fn any_update_in_network_group(thresholds: &DRepVotingThresholds, update: &Proto
         || update.max_value_size.is_some()
         || update.max_collateral_inputs.is_some();
 
-    if any { Some(into_safe_ratio(&thresholds.pp_network_group)) } else { None }
+    if any { Some(thresholds.pp_network_group.into()) } else { None }
 }
 
 // Check whether the update contains any parameter that is considered part of the 'economic group'.
@@ -103,7 +103,7 @@ fn any_update_in_economic_group(thresholds: &DRepVotingThresholds, update: &Prot
         || update.execution_costs.is_some()
         || update.minfee_refscript_cost_per_byte.is_some();
 
-    if any { Some(into_safe_ratio(&thresholds.pp_economic_group)) } else { None }
+    if any { Some(thresholds.pp_economic_group.into()) } else { None }
 }
 
 // Check whether the update contains any parameter that is considered part of the 'technical group'.
@@ -114,7 +114,7 @@ fn any_update_in_technical_group(thresholds: &DRepVotingThresholds, update: &Pro
         || update.cost_models_for_script_languages.is_some()
         || update.collateral_percentage.is_some();
 
-    if any { Some(into_safe_ratio(&thresholds.pp_technical_group)) } else { None }
+    if any { Some(thresholds.pp_technical_group.into()) } else { None }
 }
 
 // Check whether the update contains any parameter that is considered part of the 'governance group'.
@@ -131,7 +131,7 @@ fn any_update_in_governance_group(
         || update.drep_deposit.is_some()
         || update.drep_inactivity_period.is_some();
 
-    if any { Some(into_safe_ratio(&thresholds.pp_governance_group)) } else { None }
+    if any { Some(thresholds.pp_governance_group.into()) } else { None }
 }
 
 // Tally
@@ -183,7 +183,7 @@ mod tests {
     use std::{collections::BTreeMap, rc::Rc};
 
     use amaru_kernel::{
-        DRep, Epoch, ProposalEnum, SafeRatio, Vote, any_drep_voting_thresholds, any_proposal_enum, any_vote_ref,
+        DRep, DRepVotingThresholds, Epoch, ProposalEnum, SafeRatio, Vote, any_vote_ref,
         utils::tests::assert_strategy_sometimes_fails,
     };
     use num::One;
@@ -197,8 +197,8 @@ mod tests {
     proptest! {
         #[test]
         fn prop_state_of_no_confidence_only_influence_cc(
-            drep_voting_thresholds in any_drep_voting_thresholds(),
-            proposal in any_proposal_enum(),
+            drep_voting_thresholds in any::<DRepVotingThresholds>(),
+            proposal in any::<ProposalEnum>(),
         ) {
             let threshold_normal = voting_threshold(
                 false,
@@ -255,7 +255,7 @@ mod tests {
     pub fn any_tally()
     -> impl Strategy<Value = (Epoch, ProposalEnum, BTreeMap<DRep, &'static Vote>, Rc<StakeDistribution>)> {
         any_stake_distribution_no_pools(MIN_ARBITRARY_EPOCH, MAX_ARBITRARY_EPOCH).prop_flat_map(|stake_distribution| {
-            (any_epoch(), any_proposal_enum(), any_votes(&stake_distribution), Just(Rc::new(stake_distribution)))
+            (any_epoch(), any::<ProposalEnum>(), any_votes(&stake_distribution), Just(Rc::new(stake_distribution)))
         })
     }
 

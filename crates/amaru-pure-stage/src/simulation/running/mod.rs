@@ -16,7 +16,8 @@
 
 use std::{
     any::type_name,
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    fmt::Write as _,
     mem::replace,
     sync::Arc,
     task::{Context, Poll, Waker},
@@ -31,7 +32,7 @@ use tokio::{runtime::Handle, select, sync::watch};
 
 use crate::{
     BLACKHOLE_NAME, BoxFuture, DurationDist, Effect, ExternalEffect, ExternalEffectAPI, Instant, Name, Resources,
-    ScheduleId, SendData, StageRef, StageResponse,
+    ScheduleId, SendData, StageRef, StageResponse, TrySend,
     effect::{CallExtra, CanSupervise, InjectFn, ScheduleIds, StageEffect},
     effect_box::EffectBox,
     serde::{SendDataValue, to_cbor},
@@ -42,10 +43,10 @@ use crate::{
         random::EvalStrategy,
         running::{
             resume::{
-                resume_add_stage_internal, resume_call_internal, resume_call_send_internal,
+                ReceiveResume, resume_add_stage_internal, resume_call_internal, resume_call_send_internal,
                 resume_cancel_schedule_internal, resume_clock_internal, resume_detach_internal,
                 resume_external_internal, resume_receive_internal, resume_schedule_internal, resume_send_internal,
-                resume_wait_internal, resume_wire_stage_internal,
+                resume_try_send_internal, resume_wait_internal, resume_wire_stage_internal,
             },
             scheduled_runnables::ScheduledRunnables,
         },
@@ -83,6 +84,8 @@ pub struct SimulationRunning {
     overrides: Vec<OverrideExternalEffect>,
     breakpoints: Vec<(Name, Box<dyn Fn(&Effect) -> bool + Send + 'static>)>,
     schedule_ids: ScheduleIds,
+    /// Wakeups for sampled effect durations. Not the counter stages observe via `schedule_at`.
+    effect_schedule_ids: ScheduleIds,
     trace_buffer: Arc<Mutex<TraceBuffer>>,
     eval_strategy: Box<dyn EvalStrategy>,
     duration_rng: StdRng,
@@ -109,6 +112,11 @@ pub struct SimulationRunning {
     virtual_child_stages: bool,
     /// Effect that hit a breakpoint and has not yet been interpreted.
     pending_breakpoint: Option<(Name, Effect)>,
+    /// Parked calls moved into the callee mailbox after their deadline wakeup was armed.
+    ///
+    /// Keyed by the call's [`ScheduleId`]. The wakeup consumes the id and reports `TimedOut`.
+    /// A reply that arrives first removes it so the id does not stay behind.
+    admitted_calls: BTreeSet<ScheduleId>,
 }
 
 /// Borrow of the effect that hit a breakpoint. Must be dropped before the next [`SimulationRunning::run`].
@@ -188,6 +196,7 @@ impl SimulationRunning {
             overrides: Vec::new(),
             breakpoints: Vec::new(),
             schedule_ids,
+            effect_schedule_ids: ScheduleIds::internal(),
             trace_buffer,
             eval_strategy,
             duration_rng,
@@ -202,6 +211,7 @@ impl SimulationRunning {
             tokio_handle,
             virtual_child_stages: false,
             pending_breakpoint: None,
+            admitted_calls: BTreeSet::new(),
         }
     }
 
@@ -353,6 +363,29 @@ impl SimulationRunning {
         self.scheduled.next_wakeup_time()
     }
 
+    /// Advance to the next sampled-effect wakeup and fire it, leaving stage timers pending.
+    ///
+    /// A stage timer at the same instant sorts before an effect wakeup: [`ScheduleId`] orders
+    /// by time, then by id, and effect ids sit in the high half. [`Self::skip_to_next_wakeup`]
+    /// would fire that timer too. This fires only the effect ids at the chosen instant.
+    ///
+    /// Returns `false` when the next wakeup is a stage timer, or when nothing is scheduled.
+    pub fn elapse_effect_wakeups(&mut self) -> bool {
+        let Some(at) = self.scheduled.next_internal_wakeup() else {
+            return false;
+        };
+        if self.clock.now(self.global_epoch_offset) < at {
+            self.clock.advance_to(at);
+            self.trace_buffer.lock().push_clock(at);
+        }
+        let mut fired = false;
+        while let Some(runnable) = self.scheduled.take_internal_at(at) {
+            runnable(self);
+            fired = true;
+        }
+        fired
+    }
+
     fn schedule_wakeup(&mut self, id: ScheduleId, wakeup: impl FnOnce(&mut SimulationRunning) + Send + 'static) {
         self.scheduled.schedule(id, Box::new(wakeup));
     }
@@ -385,7 +418,7 @@ impl SimulationRunning {
             Some(d) if d.is_zero() => true,
             Some(delta) => {
                 let now = self.clock.now(self.global_epoch_offset);
-                let id = self.schedule_ids.next_at(now + delta);
+                let id = self.effect_schedule_ids.next_at(now + delta);
                 let name = at_stage.clone();
                 self.schedule_wakeup(id, move |sim| {
                     if let Some(pending) = sim.external_inflight.get_mut(&name) {
@@ -410,7 +443,7 @@ impl SimulationRunning {
             Some(d) if d.is_zero() => true,
             Some(delta) => {
                 let now = self.clock.now(self.global_epoch_offset);
-                let schedule_id = self.schedule_ids.next_at(now + delta);
+                let schedule_id = self.effect_schedule_ids.next_at(now + delta);
                 self.schedule_wakeup(schedule_id, move |sim| {
                     if let Some(pending) = sim.detach_inflight.get_mut(&id) {
                         pending.time_ready = true;
@@ -455,9 +488,9 @@ impl SimulationRunning {
             .get(at_stage)
             .and_then(|pending| pending.dist.force_timeout())
             .expect("force only for sampled DurationDist");
-        // Poll first so already-ready `run()` (typical wrap_sync) never enters the runtime.
-        // `timeout` must be constructed inside `block_on`: current-thread test runtimes
-        // have no ambient reactor, and `tokio::time::timeout` requires one.
+        // The first poll runs `effect.run`. A `wrap_sync` body finishes in that poll and never
+        // enters the runtime. `timeout` must be constructed inside `block_on`: current-thread
+        // test runtimes have no ambient reactor, and `tokio::time::timeout` requires one.
         let result = match std::future::Future::poll(fut.as_mut(), &mut Context::from_waker(Waker::noop())) {
             Poll::Ready(result) => result,
             Poll::Pending => match self.tokio_handle.block_on(async { tokio::time::timeout(timeout, fut).await }) {
@@ -470,11 +503,16 @@ impl SimulationRunning {
         self.provide_external_result(at_stage.clone(), result);
     }
 
+    /// Poll pending effect futures that are already due.
+    ///
+    /// A sampled `δ` keeps `time_ready` false until its wakeup. Polling earlier would run a
+    /// `wrap_sync` body before that deadline. Missing inflight state counts as due.
     fn poll_ready_computations<K: Clone + Ord>(
         pending: &mut BTreeMap<K, BoxFuture<'static, Box<dyn SendData>>>,
         cx: &mut Context<'_>,
+        is_due: impl Fn(&K) -> bool,
     ) -> Option<(K, Box<dyn SendData>)> {
-        let keys: Vec<K> = pending.keys().cloned().collect();
+        let keys: Vec<K> = pending.keys().filter(|key| is_due(key)).cloned().collect();
         for key in keys {
             let Some(fut) = pending.get_mut(&key) else {
                 continue;
@@ -542,7 +580,7 @@ impl SimulationRunning {
     fn deliver_detach_message(&mut self, at_stage: Name, msg: Box<dyn SendData>) {
         // `run()` does not re-enter `receive_inputs` on every step, so a detach
         // must wake Receive the same way a Send does.
-        let should_resume = match deliver_message(&mut self.stages, self.mailbox_size, at_stage.clone(), msg) {
+        let should_resume = match deliver_message(&mut self.stages, at_stage.clone(), msg) {
             DeliverMessageResult::Delivered(_) => true,
             DeliverMessageResult::Full(_, msg) => {
                 self.undelivered_detaches.push_back((at_stage.clone(), msg));
@@ -562,7 +600,7 @@ impl SimulationRunning {
         let mut parked = VecDeque::new();
         let mut resume = Vec::new();
         while let Some((name, msg)) = self.undelivered_detaches.pop_front() {
-            match deliver_message(&mut self.stages, self.mailbox_size, name.clone(), msg) {
+            match deliver_message(&mut self.stages, name.clone(), msg) {
                 DeliverMessageResult::Delivered(_) => resume.push(name),
                 DeliverMessageResult::Full(_, msg) => {
                     parked.push_back((name, msg));
@@ -629,7 +667,8 @@ impl SimulationRunning {
         match self.apply_external_overrides(effect) {
             Err(msg) => self.provide_detach_result(id, msg),
             Ok(effect) => {
-                self.pending_detach_computations.insert(id, effect.run(self.resources.clone()));
+                self.pending_detach_computations
+                    .insert(id, crate::effect::run_external_effect(effect, self.resources.clone(), &at_stage));
                 self.try_deliver_detach(id);
             }
         }
@@ -677,7 +716,7 @@ impl SimulationRunning {
             if leftover.is_some() {
                 panic!("cannot enqueue to a call-reply StageRef");
             }
-            let ok = deliver_message(&mut self.stages, self.mailbox_size, name, payload);
+            let ok = deliver_message(&mut self.stages, name, payload);
             if matches!(ok, DeliverMessageResult::Full(..)) {
                 panic!("stage `{}` mailbox is full", sr.as_ref().name());
             }
@@ -694,9 +733,63 @@ impl SimulationRunning {
         expect_stage(self.stages.get(name), name, "which has no mailbox").mailbox.len()
     }
 
-    /// Capacity of each stage mailbox (the limit [`Self::enqueue_msg`] will panic on).
+    /// Default bulk mailbox capacity. A stage that set its own size does not use this.
     pub fn mailbox_size(&self) -> usize {
         self.mailbox_size
+    }
+
+    /// Describe a send deadlock.
+    ///
+    /// Each blocked send is shown with the message that was not admitted. Mailboxes (and a
+    /// non-empty priority queue) are shown for the stages that lie on a cycle in that graph.
+    /// When the blocked sends do not form a cycle, the mailboxes of the send targets are shown
+    /// instead.
+    pub fn format_deadlock(&self, blocks: &[SendBlock]) -> String {
+        let cycle = send_cycle(blocks);
+        let mut out = String::new();
+        let _ = writeln!(out, "blocked sends:");
+        for block in blocks {
+            let on_cycle = cycle.contains(&block.from) && cycle.contains(&block.to);
+            let mark = if on_cycle { " [cycle]" } else { "" };
+            match parked_send(&self.stages, &block.from, &block.to) {
+                Some(msg) => {
+                    let _ = writeln!(out, "  {} -> {}{mark}: {msg:?}", block.from, block.to);
+                }
+                None => {
+                    let _ = writeln!(out, "  {} -> {}{mark}: <message not parked>", block.from, block.to);
+                }
+            }
+        }
+        let shown: Vec<&Name> = if cycle.is_empty() {
+            let _ = writeln!(out, "no send cycle; mailboxes of the blocked targets:");
+            let mut targets: Vec<&Name> = blocks.iter().map(|block| &block.to).collect();
+            targets.sort();
+            targets.dedup();
+            targets
+        } else {
+            let _ = writeln!(out, "cycle mailboxes:");
+            cycle.iter().collect()
+        };
+        for name in shown {
+            let Some(stage) = self.stages.get(name) else {
+                let _ = writeln!(out, "  {name}: <stage gone>");
+                continue;
+            };
+            let _ = writeln!(out, "  {name} bulk ({}/{}):", stage.mailbox.len(), stage.mailbox_size);
+            if stage.mailbox.is_empty() {
+                let _ = writeln!(out, "    <empty>");
+            }
+            for (index, msg) in stage.mailbox.iter().enumerate() {
+                let _ = writeln!(out, "    [{index}] {msg:?}");
+            }
+            if !stage.priority.is_empty() {
+                let _ = writeln!(out, "  {name} priority ({}):", stage.priority.len());
+                for (index, msg) in stage.priority.iter().enumerate() {
+                    let _ = writeln!(out, "    [{index}] {msg:?}");
+                }
+            }
+        }
+        out
     }
 
     /// Obtain a reference to the current state of the given stage.
@@ -763,7 +856,7 @@ impl SimulationRunning {
         let mut delivered = Vec::new();
         while let Some(mut envelope) = self.inputs.try_next() {
             let msg = replace(&mut envelope.msg, Box::new(()));
-            match deliver_message(&mut self.stages, self.mailbox_size, envelope.name.clone(), msg) {
+            match deliver_message(&mut self.stages, envelope.name.clone(), msg) {
                 DeliverMessageResult::Delivered(_) => {
                     delivered.push(envelope.name);
                     envelope.tx.send(()).ok();
@@ -790,6 +883,9 @@ impl SimulationRunning {
 
     /// When external effects are currently unresolved, await either the resolution of an effect
     /// or the arrival of a new external input message.
+    ///
+    /// Futures whose sampled deadline has not been reached are left unpolled. If every pending
+    /// future is in that state, this returns `None` instead of parking.
     pub async fn await_external_effect(&mut self) -> Option<Name> {
         if self.pending_computations.is_empty() && self.pending_detach_computations.is_empty() {
             return None;
@@ -798,6 +894,10 @@ impl SimulationRunning {
             return Some(name);
         }
         if self.pending_computations.is_empty() && self.pending_detach_computations.is_empty() {
+            return None;
+        }
+        let (due_blocking, due_detach) = self.due_computations();
+        if due_blocking.is_empty() && due_detach.is_empty() {
             return None;
         }
 
@@ -810,13 +910,15 @@ impl SimulationRunning {
                 None
             }
             ready = std::future::poll_fn(|cx| {
-                if let Some(ready) = Self::poll_ready_computations(pending, cx) {
+                if let Some(ready) = Self::poll_ready_computations(pending, cx, |key| due_blocking.contains(key)) {
                     return Poll::Ready(Some(ReadyComputation::Blocking(ready)));
                 }
-                if let Some(ready) = Self::poll_ready_computations(pending_detach, cx) {
+                if let Some(ready) = Self::poll_ready_computations(pending_detach, cx, |key| due_detach.contains(key)) {
                     return Poll::Ready(Some(ReadyComputation::Detach(ready)));
                 }
-                if pending.is_empty() && pending_detach.is_empty() {
+                let blocking_left = pending.keys().any(|key| due_blocking.contains(key));
+                let detach_left = pending_detach.keys().any(|key| due_detach.contains(key));
+                if !blocking_left && !detach_left {
                     Poll::Ready(None)
                 } else {
                     Poll::Pending
@@ -826,11 +928,36 @@ impl SimulationRunning {
         Some(self.finish_ready_computation(ready?))
     }
 
+    /// Pending computations whose sampled deadline has already been reached.
+    ///
+    /// Collected before the maps are borrowed for polling. The clock does not advance while
+    /// [`Self::await_external_effect`] polls, so the set stays valid for that wait.
+    fn due_computations(&self) -> (BTreeSet<Name>, BTreeSet<u64>) {
+        let blocking = self
+            .pending_computations
+            .keys()
+            .filter(|name| self.external_inflight.get(*name).is_none_or(|pending| pending.time_ready))
+            .cloned()
+            .collect();
+        let detach = self
+            .pending_detach_computations
+            .keys()
+            .filter(|id| self.detach_inflight.get(*id).is_none_or(|pending| pending.time_ready))
+            .copied()
+            .collect();
+        (blocking, detach)
+    }
+
     fn take_ready_computation(&mut self, cx: &mut Context<'_>) -> Option<Name> {
-        if let Some(ready) = Self::poll_ready_computations(&mut self.pending_computations, cx) {
+        let (due_blocking, due_detach) = self.due_computations();
+        if let Some(ready) =
+            Self::poll_ready_computations(&mut self.pending_computations, cx, |name| due_blocking.contains(name))
+        {
             return Some(self.finish_ready_computation(ReadyComputation::Blocking(ready)));
         }
-        if let Some(ready) = Self::poll_ready_computations(&mut self.pending_detach_computations, cx) {
+        if let Some(ready) =
+            Self::poll_ready_computations(&mut self.pending_detach_computations, cx, |id| due_detach.contains(id))
+        {
             return Some(self.finish_ready_computation(ReadyComputation::Detach(ready)));
         }
         None
@@ -1057,34 +1184,75 @@ impl SimulationRunning {
 
         match effect {
             Effect::Receive { at_stage: to } => {
-                match resume_receive_internal(self, &to) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        // nothing in the mailbox
-                        return None;
-                    }
+                let resumed = match resume_receive_internal(self, &to) {
+                    Ok(resumed) => resumed,
                     Err(err) => {
                         tracing::warn!(%to, ?err, "cannot resume receive, shutting down simulation");
                         let terminated =
                             err.downcast::<resume::UnsupervisedChildTermination>().map(|e| e.0).unwrap_or(to);
                         return Some(Blocked::Terminated(terminated));
                     }
+                };
+                // A bulk pop frees one stored slot. Capacity zero never stores a message, so a
+                // receiver that is still waiting can take a parked sender as a rendezvous.
+                let offer_slot = match resumed {
+                    ReceiveResume::Bulk => true,
+                    ReceiveResume::Other => false,
+                    ReceiveResume::Idle => self.stages.get(&to).is_some_and(|data| {
+                        data.mailbox_size == 0
+                            && data.mailbox.is_empty()
+                            && matches!(data.waiting, Some(StageEffect::Receive))
+                            && !data.senders.is_empty()
+                    }),
+                };
+                if !offer_slot {
+                    return None;
                 }
-                let data_to = self.stages.get_mut(&to)?;
-                // resuming receive has removed one message from the mailbox, so check for blocked senders
-                let (from, msg) = data_to.senders.pop_front()?;
-                post_message(data_to, self.mailbox_size, msg);
+                if let Some(blocked) = self.admit_parked_sender(&to, resumed == ReceiveResume::Idle) {
+                    return Some(blocked);
+                }
+            }
+            Effect::TrySend { from, to, msg } => {
+                let outcome = if to.is_empty() {
+                    tracing::info!(stage = %from, "try_send to blackhole dropped");
+                    TrySend::Queued
+                } else {
+                    match self.stages.get(&to) {
+                        None => TrySend::Gone,
+                        Some(data) if data.mailbox_accepts() => TrySend::Queued,
+                        Some(_) => TrySend::Full,
+                    }
+                };
+                if outcome == TrySend::Queued && !to.is_empty() {
+                    match deliver_message(&mut self.stages, to.clone(), msg) {
+                        DeliverMessageResult::Delivered(data_to) => {
+                            let name = data_to.name.clone();
+                            if let Err(err) = resume_receive_internal(self, &name) {
+                                tracing::warn!(%from, %to, ?err, "cannot deliver try_send, shutting down simulation");
+                                let terminated =
+                                    err.downcast::<resume::UnsupervisedChildTermination>().map(|e| e.0).unwrap_or(name);
+                                return Some(Blocked::Terminated(terminated));
+                            }
+                        }
+                        DeliverMessageResult::Full(_, _) => {
+                            panic!("stage `{to}` accepted a try_send and then refused it");
+                        }
+                        DeliverMessageResult::NotFound => {
+                            panic!("stage `{to}` disappeared during try_send");
+                        }
+                    }
+                }
                 let data_from = skip_if_terminated(self.stages.get_mut(&from), &from)?;
-                resume_send_internal(
+                resume_try_send_internal(
                     data_from,
                     &mut |name, response| {
                         tracing::debug!(%name, ?response, "enqueuing stage");
                         self.runnable.push_back((name, response));
                     },
-                    to.clone(),
-                    &mut None,
+                    &to,
+                    outcome,
                 )
-                .expect("call is always runnable");
+                .expect("try_send is always runnable");
             }
             Effect::Send { from, to, .. } if to.is_empty() => {
                 tracing::info!(stage = %from, "message send to blackhole dropped");
@@ -1107,6 +1275,8 @@ impl SimulationRunning {
                         resume_send_internal(data_from, run, to.clone(), &mut msg).expect("call is always runnable");
                     if let Some(id) = id {
                         self.scheduled.remove(&id);
+                        // The reply beat the deadline, so that wakeup will not consult this id.
+                        self.admitted_calls.remove(&id);
                         let data_to = skip_if_terminated(self.stages.get_mut(&to), &to)?;
                         // call response races with other responses and timeout, so failure to resume is okay
                         resume_call_internal(
@@ -1118,8 +1288,7 @@ impl SimulationRunning {
                         .ok();
                     }
                 } else {
-                    let mb = self.mailbox_size;
-                    let resume = match deliver_message(&mut self.stages, mb, to.clone(), msg) {
+                    let resume = match deliver_message(&mut self.stages, to.clone(), msg) {
                         DeliverMessageResult::Delivered(data_to) => {
                             // `to` may not be suspended on receive, so failure to resume is okay
                             let name = data_to.name.clone();
@@ -1257,7 +1426,10 @@ impl SimulationRunning {
                 }
                 Ok(effect) => {
                     let name = at_stage.clone();
-                    self.pending_computations.insert(name.clone(), effect.run(self.resources.clone()));
+                    self.pending_computations.insert(
+                        name.clone(),
+                        crate::effect::run_external_effect(effect, self.resources.clone(), &name),
+                    );
                     self.try_deliver_external(&name);
                 }
             },
@@ -1285,7 +1457,7 @@ impl SimulationRunning {
                 let data = skip_if_terminated(self.stages.get_mut(&at_stage), &at_stage)?;
                 resume_add_stage_internal(data, run, name).expect("add stage effect is always runnable");
             }
-            Effect::WireStage { at_stage, name, initial_state, tombstone } => {
+            Effect::WireStage { at_stage, name, initial_state, tombstone, mailbox_size } => {
                 self.trace_buffer.lock().push_state(&name, &initial_state);
                 let data = skip_if_terminated(self.stages.get_mut(&at_stage), &at_stage)?;
                 let transition = resume_wire_stage_internal(data, run).expect("wire stage effect is always runnable");
@@ -1303,6 +1475,7 @@ impl SimulationRunning {
                         StageData {
                             name,
                             mailbox: VecDeque::new(),
+                            mailbox_size,
                             priority: VecDeque::new(),
                             tombstones: VecDeque::new(),
                             state: StageState::Idle(initial_state),
@@ -1321,6 +1494,80 @@ impl SimulationRunning {
         None
     }
 
+    /// Move one parked sender into `to`'s mailbox.
+    ///
+    /// `resume_receiver` is set for a capacity-zero rendezvous, where `to` is still waiting
+    /// on receive. After a bulk pop, `to` is already running and the admitted message waits
+    /// for its next receive.
+    ///
+    /// A sender that is gone, or no longer waiting to deliver here, is dropped. That includes
+    /// a call whose caller terminated while the request was only queued.
+    fn admit_parked_sender(&mut self, to: &Name, resume_receiver: bool) -> Option<Blocked> {
+        enum Parked {
+            Call(Option<ScheduleId>),
+            Send,
+        }
+        loop {
+            let (from, msg) = {
+                let data_to = self.stages.get_mut(to)?;
+                data_to.senders.pop_front()?
+            };
+            let parked = match self.stages.get(&from).and_then(|data| data.waiting.as_ref()) {
+                Some(StageEffect::Call(name, _, extra)) if name == to => {
+                    let id = match extra {
+                        CallExtra::Scheduled(id) => Some(*id),
+                        // A call is scheduled before it can park, so this carries no deadline id.
+                        CallExtra::CallFn(_) => None,
+                    };
+                    Some(Parked::Call(id))
+                }
+                Some(StageEffect::Send(name, None, _)) if name == to => Some(Parked::Send),
+                _ => None,
+            };
+            let Some(parked) = parked else {
+                continue;
+            };
+            let admitted = {
+                let data_to = self.stages.get_mut(to)?;
+                push_reserved(data_to, msg)
+            };
+            match admitted {
+                Ok(()) => {}
+                Err(msg) => {
+                    let data_to = self.stages.get_mut(to)?;
+                    data_to.senders.push_front((from, msg));
+                    return None;
+                }
+            }
+            // The deadline wakeup captured admission at schedule time. Remember a call that
+            // enters the mailbox later so that wakeup reports TimedOut.
+            if let Parked::Call(Some(id)) = &parked {
+                self.admitted_calls.insert(*id);
+            }
+            if resume_receiver && let Err(err) = resume_receive_internal(self, to) {
+                tracing::warn!(%to, ?err, "cannot resume rendezvous receive, shutting down simulation");
+                let terminated =
+                    err.downcast::<resume::UnsupervisedChildTermination>().map(|e| e.0).unwrap_or_else(|_| to.clone());
+                return Some(Blocked::Terminated(terminated));
+            }
+            if matches!(parked, Parked::Call(_)) {
+                return None;
+            }
+            let data_from = skip_if_terminated(self.stages.get_mut(&from), &from)?;
+            resume_send_internal(
+                data_from,
+                &mut |name, response| {
+                    tracing::debug!(%name, ?response, "enqueuing stage");
+                    self.runnable.push_back((name, response));
+                },
+                to.clone(),
+                &mut None,
+            )
+            .expect("parked send is always runnable");
+            return None;
+        }
+    }
+
     /// Recursively terminate the given stage and all its children.
     ///
     /// This also cleans up the state of all terminated stages in the simulation,
@@ -1333,6 +1580,11 @@ impl SimulationRunning {
         // TODO(network):
         // - add kill switch to scheduled external effects to terminate them
         // - record source stage for scheduled messages to remove them
+
+        // A call or send that was only queued must not be admitted after this stage is gone.
+        for data in self.stages.values_mut() {
+            data.senders.retain(|(from, _)| from != &at_stage);
+        }
 
         let Some(data) = self.stages.get_mut(&at_stage) else {
             tracing::warn!(name = %at_stage, "stage was already terminated, skipping terminate stage effect");
@@ -1366,6 +1618,10 @@ impl SimulationRunning {
         let senders = std::mem::take(&mut data.senders);
         for (waiting, _) in senders {
             let data = expect_stage(self.stages.get_mut(&waiting), &waiting, "which cannot send");
+            // The deadline wakeup still completes a queued call. Resuming it as a send only logs a failure.
+            if matches!(data.waiting, Some(StageEffect::Call(_, _, _))) {
+                continue;
+            }
             if let Err(err) = resume_send_internal(data, run, at_stage.clone(), &mut None) {
                 tracing::error!(from = %waiting, to = %at_stage, %err, "failed to resume send");
                 continue;
@@ -1583,6 +1839,52 @@ pub enum InputsResult {
     Blocked(Name),
 }
 
+fn parked_send<'a>(stages: &'a BTreeMap<Name, StageData>, from: &Name, to: &Name) -> Option<&'a dyn SendData> {
+    stages.get(to)?.senders.iter().find(|(name, _)| name == from).map(|(_, msg)| msg.as_ref())
+}
+
+/// Stages that lie on a cycle in the blocked-send graph.
+fn send_cycle(blocks: &[SendBlock]) -> BTreeSet<Name> {
+    let mut adj: BTreeMap<Name, Vec<Name>> = BTreeMap::new();
+    for block in blocks {
+        adj.entry(block.from.clone()).or_default().push(block.to.clone());
+        adj.entry(block.to.clone()).or_default();
+    }
+    let mut on_cycle = BTreeSet::new();
+    let mut color: BTreeMap<Name, u8> = BTreeMap::new();
+    let mut stack = Vec::new();
+    for start in adj.keys().cloned().collect::<Vec<_>>() {
+        if color.get(&start).copied().unwrap_or(0) == 0 {
+            visit_send(&adj, &mut color, &mut stack, &mut on_cycle, start);
+        }
+    }
+    on_cycle
+}
+
+fn visit_send(
+    adj: &BTreeMap<Name, Vec<Name>>,
+    color: &mut BTreeMap<Name, u8>,
+    stack: &mut Vec<Name>,
+    on_cycle: &mut BTreeSet<Name>,
+    name: Name,
+) {
+    color.insert(name.clone(), 1);
+    stack.push(name.clone());
+    for next in adj.get(&name).into_iter().flatten() {
+        match color.get(next).copied().unwrap_or(0) {
+            1 => {
+                if let Some(at) = stack.iter().position(|seen| seen == next) {
+                    on_cycle.extend(stack[at..].iter().cloned());
+                }
+            }
+            0 => visit_send(adj, color, stack, on_cycle, next.clone()),
+            _ => {}
+        }
+    }
+    stack.pop();
+    color.insert(name, 2);
+}
+
 fn block_reason(sim: &SimulationRunning) -> Blocked {
     debug_assert!(sim.runnable.is_empty(), "runnable must be empty");
     if sim.stages.values().filter_map(|d| d.waiting.as_ref()).all(|v| matches!(v, StageEffect::Receive)) {
@@ -1685,7 +1987,6 @@ enum DeliverMessageResult<'a> {
 /// does not exist, or `Err` if the mailbox is full.
 fn deliver_message(
     stages: &mut BTreeMap<Name, StageData>,
-    mailbox_size: usize,
     name: Name,
     msg: Box<dyn SendData>,
 ) -> DeliverMessageResult<'_> {
@@ -1693,11 +1994,24 @@ fn deliver_message(
         return DeliverMessageResult::NotFound;
     };
 
-    post_message(data, mailbox_size, msg)
+    post_message(data, msg)
 }
 
-fn post_message(data: &mut StageData, mailbox_size: usize, msg: Box<dyn SendData>) -> DeliverMessageResult<'_> {
-    if data.mailbox.len() >= mailbox_size {
+/// Admit a message that already owns the next slot (the head of `senders`).
+///
+/// Unlike [`post_message`], this ignores other parked senders. Capacity zero may hold the
+/// message only until the waiting receiver takes it.
+fn push_reserved(data: &mut StageData, msg: Box<dyn SendData>) -> Result<(), Box<dyn SendData>> {
+    let room = data.mailbox.len() < data.mailbox_size || (data.mailbox_size == 0 && data.mailbox.is_empty());
+    if !room {
+        return Err(msg);
+    }
+    data.mailbox.push_back(msg);
+    Ok(())
+}
+
+fn post_message(data: &mut StageData, msg: Box<dyn SendData>) -> DeliverMessageResult<'_> {
+    if !data.mailbox_accepts() {
         return DeliverMessageResult::Full(data, msg);
     }
     data.mailbox.push_back(msg);
@@ -1742,4 +2056,125 @@ fn deliver_priority(sim: &mut SimulationRunning, at_stage: Name, msg: Box<dyn Se
     let name = data.name.clone();
     // Stage may already be waiting on Receive; wake it so the priority message is not stuck.
     let _ = resume_receive_internal(sim, &name);
+}
+
+#[cfg(test)]
+mod admission_cleanup {
+    use std::time::Duration;
+
+    use super::SimulationRunning;
+    use crate::{
+        StageGraph, StageRef,
+        simulation::{Run, SimulationBuilder},
+        trace_buffer::TerminationReason,
+    };
+
+    /// Mailbox size 1, one filler queued, caller blocked in `call`.
+    fn parked_call() -> (tokio::runtime::Runtime, SimulationRunning, crate::Name, crate::Name) {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+        let mut network = SimulationBuilder::default();
+        let callee = network.stage_with_mailbox_size(
+            "callee",
+            async |out: StageRef<u8>, msg: u8, eff| {
+                if msg == 0 {
+                    eff.send(&out, 1u8).await;
+                    eff.wait(Duration::from_secs(10)).await;
+                } else {
+                    eff.send(&out, msg).await;
+                }
+                out
+            },
+            1,
+        );
+        let callee_ref = callee.sender();
+        let caller = network.stage("caller", async |callee: StageRef<u8>, _: u8, eff| {
+            let _ = eff.call(&callee, Duration::from_secs(30), |_: StageRef<u8>| 9u8).await;
+            callee
+        });
+        let caller_ref = caller.sender();
+        let (out, mut rx) = network.output("out", 4);
+        network.wire_up(callee, out);
+        network.wire_up(caller, callee_ref.clone());
+        let mut sim = network.run(rt.handle());
+        sim.enqueue_msg(&callee_ref, [0u8]);
+        sim.run(Run::default()).assert_sleeping();
+        assert_eq!(rx.try_next(), Some(1));
+        sim.enqueue_msg(&callee_ref, [1u8]);
+        sim.enqueue_msg(&caller_ref, [0u8]);
+        sim.run(Run::default()).assert_sleeping();
+        let callee_name = callee_ref.name().clone();
+        let caller_name = caller_ref.name().clone();
+        assert_eq!(sim.stages.get(&callee_name).expect("callee").senders.len(), 1, "call is parked");
+        (rt, sim, callee_name, caller_name)
+    }
+
+    #[test]
+    fn terminate_drops_the_callers_parked_call() {
+        let (_rt, mut sim, callee, caller) = parked_call();
+        sim.terminate_stage(caller, TerminationReason::Voluntary);
+        let senders = &sim.stages.get(&callee).expect("callee").senders;
+        assert!(senders.is_empty(), "outbound retain must drop the parked call: {senders:?}");
+    }
+
+    #[test]
+    fn admit_drops_a_parked_sender_that_is_gone() {
+        let (_rt, mut sim, callee, caller) = parked_call();
+        let mailbox = sim.stages.get(&callee).expect("callee").mailbox.len();
+        sim.stages.remove(&caller);
+        sim.admit_parked_sender(&callee, false);
+        let data = sim.stages.get(&callee).expect("callee");
+        assert!(data.senders.is_empty(), "a gone sender is not put back on the queue");
+        assert_eq!(data.mailbox.len(), mailbox, "a gone sender is not admitted");
+    }
+}
+
+#[cfg(test)]
+mod deadlock_report {
+    use crate::{
+        StageGraph,
+        simulation::{Blocked, Run, SimulationBuilder},
+    };
+
+    #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    struct Ends {
+        me: crate::StageRef<Note>,
+        peer: crate::StageRef<Note>,
+    }
+
+    #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    enum Note {
+        Boot,
+        Extra,
+        Ping,
+    }
+
+    async fn bounce(st: Ends, msg: Note, eff: crate::Effects<Note>) -> Ends {
+        if matches!(msg, Note::Boot) {
+            eff.send(&st.me, Note::Extra).await;
+            eff.send(&st.peer, Note::Ping).await;
+        }
+        st
+    }
+
+    #[test]
+    fn format_deadlock_shows_the_blocked_send_and_the_cycle_mailbox() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+        let mut network = SimulationBuilder::default().with_mailbox_size(1);
+        let a = network.stage("a", bounce);
+        let b = network.stage("b", bounce);
+        let a_ref = a.sender();
+        let b_ref = b.sender();
+        let a = network.wire_up(a, Ends { me: a_ref.clone(), peer: b_ref.clone() });
+        let b = network.wire_up(b, Ends { me: b_ref, peer: a_ref });
+        network.preload(&a, [Note::Boot]).expect("preload a");
+        network.preload(&b, [Note::Boot]).expect("preload b");
+        let mut running = network.run(rt.handle());
+        let blocked = running.run(Run::default());
+        let Blocked::Deadlock(blocks) = &blocked else { panic!("expected a deadlock, got {blocked:?}") };
+        let report = running.format_deadlock(blocks);
+        assert!(report.contains("Ping"), "{report}");
+        assert!(report.contains("[cycle]"), "{report}");
+        assert!(report.contains("Extra"), "{report}");
+        assert!(report.contains("bulk (1/1)"), "{report}");
+    }
 }

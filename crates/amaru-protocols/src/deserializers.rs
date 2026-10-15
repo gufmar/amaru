@@ -16,7 +16,7 @@ use amaru_pure_stage::DeserializerGuards;
 
 use crate::{
     accept, blockfetch, chainsync, connection, handshake, keepalive, manager, mux, network_effects, observability,
-    peer_sharing, store_effects, tx_submission,
+    peer_sharing, peer_tracking_effects, store_effects, tx_submission,
 };
 
 pub fn register_deserializers() -> DeserializerGuards {
@@ -32,6 +32,7 @@ pub fn register_deserializers() -> DeserializerGuards {
     guards.extend(network_effects::register_deserializers());
     guards.extend(observability::register_deserializers());
     guards.extend(peer_sharing::register_deserializers());
+    guards.extend(peer_tracking_effects::register_deserializers());
     guards.extend(store_effects::register_deserializers());
     guards.extend(tx_submission::register_deserializers());
     guards

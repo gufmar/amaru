@@ -14,9 +14,14 @@
 
 use std::collections::BTreeMap;
 
+#[cfg(any(test, feature = "test-utils"))]
+use proptest::prelude::{Arbitrary, BoxedStrategy, Strategy, any};
+
+#[cfg(any(test, feature = "test-utils"))]
+use crate::ShelleyAddress;
 use crate::{
-    Address, AssetName, Credential, Hash, Legacy, MemoizedDatum, MemoizedScript, NonEmptyKeyValuePairs, StakeReference,
-    Value, cbor, serialize_memoized_script, size::CREDENTIAL, to_cbor, utils::cbor::SerialisedAsCbor,
+    Address, AssetName, Assets, Credential, Hash, Legacy, MemoizedDatum, MemoizedScript, StakeReference, Value, cbor,
+    serialize_memoized_script, size::CREDENTIAL, to_cbor, utils::cbor::SerialisedAsCbor,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -124,7 +129,7 @@ fn decode_legacy_output<C: cbor::HasProtocolVersion>(
     Ok(MemoizedTransactionOutput {
         original_size: 0,
         is_legacy: true,
-        address: decode_address(&cbor::decode_bytes_v12_indefinite(d, ctx)?)?,
+        address: decode_address(&cbor::decode_bytes_v12(d, ctx)?)?,
         value: d.decode_with(ctx)?,
         datum: match len {
             Some(2) => MemoizedDatum::None,
@@ -156,13 +161,13 @@ fn decode_modern_output<C: cbor::HasProtocolVersion>(
     d: &mut cbor::Decoder<'_>,
     ctx: &mut C,
 ) -> Result<MemoizedTransactionOutput, cbor::decode::Error> {
-    let (address, value, datum, script) = cbor::heterogeneous_map(
+    let (address, value, datum, script) = cbor::heterogeneous_map_unique_keys(
         d,
         (None, None, MemoizedDatum::None, None),
         |d| d.u8(),
         |d, state, field| {
             match field {
-                0 => state.0 = Some(decode_address(&cbor::decode_bytes_v12_indefinite(d, ctx)?)?),
+                0 => state.0 = Some(decode_address(&cbor::decode_bytes_v12(d, ctx)?)?),
                 1 => state.1 = Some(d.decode_with(ctx)?),
                 2 => state.2 = d.decode_with(ctx)?,
                 3 => {
@@ -273,26 +278,26 @@ fn deserialize_value<'de, D: serde::de::Deserializer<'de>>(deserializer: D) -> R
                 let policy_id = hex::decode(&policy_id)
                     .map_err(|_| serde::de::Error::custom(format!("invalid hex string: {policy_id}")))?;
 
-                let mut converted_assets = Vec::new();
+                let mut converted_assets = BTreeMap::new();
                 for (asset_name_hex, quantity) in assets {
                     let asset_name = hex::decode(&asset_name_hex)
                         .map_err(|_| serde::de::Error::custom(format!("invalid hex string: {asset_name_hex}")))?;
 
-                    converted_assets.push((
+                    converted_assets.insert(
                         AssetName::try_from(&asset_name[..])
                             .map_err(|_| serde::de::Error::custom(format!("invalid asset name; {asset_name_hex}")))?,
                         quantity
                             .try_into()
                             .map_err(|_| serde::de::Error::custom(format!("invalid quantity value: {quantity}")))?,
-                    ));
+                    );
                 }
 
-                let policy_id: Hash<CREDENTIAL> = Hash::from(policy_id.as_slice());
+                let policy_id = Hash::<CREDENTIAL>::try_from(policy_id.as_slice())
+                    .map_err(|e| serde::de::Error::custom(format!("invalid policy id: {e}")))?;
 
-                let pairs = NonEmptyKeyValuePairs::try_from(converted_assets)
-                    .map_err(|e| serde::de::Error::custom(format!("invalid asset bundle: {e}")))?;
+                let assets = Assets::try_from(converted_assets).map_err(serde::de::Error::custom)?;
 
-                multiasset.insert(policy_id, pairs);
+                multiasset.insert(policy_id, assets);
             }
 
             Value::Multiasset(coin, multiasset.into())
@@ -324,40 +329,35 @@ pub fn deserialize_script<'de, D: serde::de::Deserializer<'de>>(
 }
 
 #[cfg(any(test, feature = "test-utils"))]
-pub use tests::*;
+#[derive(Clone, Copy, Debug, Default)]
+pub enum OutputFormat {
+    #[default]
+    Modern,
+    Legacy,
+}
 
 #[cfg(any(test, feature = "test-utils"))]
-pub mod tests {
-    use proptest::{option, prelude::*};
+impl Arbitrary for MemoizedTransactionOutput {
+    type Parameters = OutputFormat;
+    type Strategy = BoxedStrategy<Self>;
+
+    fn arbitrary_with(format: Self::Parameters) -> Self::Strategy {
+        let is_legacy = matches!(format, OutputFormat::Legacy);
+
+        (any::<ShelleyAddress>(), any::<u64>(), any::<MemoizedDatum>())
+            .prop_map(move |(address, coin, datum)| {
+                MemoizedTransactionOutput::new(is_legacy, Address::Shelley(address), Value::Coin(coin), datum, None)
+            })
+            .boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
 
     use super::*;
-    #[cfg(test)]
-    use crate::{
-        Hash,
-        cbor::{self, Encode},
-    };
-    use crate::{any_hash32, any_shelley_address};
-
-    fn any_value() -> impl Strategy<Value = Value> {
-        any::<u64>().prop_map(Value::Coin)
-    }
-
-    pub fn any_datum() -> impl Strategy<Value = MemoizedDatum> {
-        prop_oneof![Just(MemoizedDatum::None), any_hash32().prop_map(MemoizedDatum::from)]
-    }
-
-    pub fn any_modern_output() -> impl Strategy<Value = MemoizedTransactionOutput> {
-        (any_shelley_address(), any_value(), any_datum())
-            .prop_map(|(address, value, datum)| MemoizedTransactionOutput::new(false, address, value, datum, None))
-    }
-
-    pub fn any_legacy_output() -> impl Strategy<Value = MemoizedTransactionOutput> {
-        (any_shelley_address(), any_value(), option::of(any_hash32().prop_map(MemoizedDatum::from))).prop_map(
-            |(address, value, datum_opt)| {
-                MemoizedTransactionOutput::new(true, address, value, datum_opt.unwrap_or(MemoizedDatum::None), None)
-            },
-        )
-    }
+    use crate::cbor::Encode;
 
     #[test]
     fn test_encode_decode_output_with_datum_hash() {
@@ -434,7 +434,7 @@ pub mod tests {
 
     proptest! {
         #[test]
-        fn decoded_size_matches_re_encoded_len_modern(output in any_modern_output()) {
+        fn decoded_size_matches_re_encoded_len_modern(output in any::<MemoizedTransactionOutput>()) {
             let bytes = to_cbor(&output);
             let decoded: MemoizedTransactionOutput = crate::from_cbor(&bytes).unwrap();
             prop_assert_eq!(decoded.original_size(), bytes.len());
@@ -442,11 +442,28 @@ pub mod tests {
         }
 
         #[test]
-        fn decoded_size_matches_re_encoded_len_legacy(output in any_legacy_output()) {
+        fn decoded_size_matches_re_encoded_len_legacy(
+            output in any_with::<MemoizedTransactionOutput>(OutputFormat::Legacy)
+        ) {
             let bytes = to_cbor(&output);
             let decoded: MemoizedTransactionOutput = crate::from_cbor(&bytes).unwrap();
             prop_assert_eq!(decoded.original_size(), bytes.len());
             prop_assert_eq!(decoded.original_size(), output.original_size());
         }
+    }
+
+    /// The ledger reads a Babbage output with `decodeSparseKeyed` (and, below protocol version 12,
+    /// with `SparseKeyed`), which refuses a key it does not know and a key it has already seen, so
+    /// a field cannot be overridden by repeating it.
+    ///
+    /// Both cases are detected before the required fields are looked for, so these inputs need no
+    /// valid address.
+    #[cfg(test)]
+    #[test_case::test_case(&[0xa2, 0x01, 0x00, 0x01, 0x01] ; "the value key twice")]
+    #[test_case::test_case(&[0xa1, 0x04, 0x00]             ; "a key beyond the last one")]
+    fn decode_rejects_unknown_and_duplicate_keys(input: &[u8]) {
+        let mut version = crate::protocol_version::PROTOCOL_VERSION_10;
+        let decoded: Result<MemoizedTransactionOutput, _> = cbor::from_cbor_no_leftovers_with(input, &mut version);
+        assert!(decoded.is_err(), "expected a decoding failure, got {decoded:?}");
     }
 }

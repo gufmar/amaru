@@ -14,15 +14,18 @@
 
 use std::fmt;
 
-use crate::{RationalNumber, cbor};
+#[cfg(any(test, feature = "test-utils"))]
+use proptest::prelude::{Arbitrary, BoxedStrategy, Strategy, any};
+
+use crate::{UnitRationalNumber, cbor};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PoolVotingThresholds {
-    pub motion_no_confidence: RationalNumber,
-    pub committee_normal: RationalNumber,
-    pub committee_no_confidence: RationalNumber,
-    pub hard_fork_initiation: RationalNumber,
-    pub security_voting_threshold: RationalNumber,
+    pub motion_no_confidence: UnitRationalNumber,
+    pub committee_normal: UnitRationalNumber,
+    pub committee_no_confidence: UnitRationalNumber,
+    pub hard_fork_initiation: UnitRationalNumber,
+    pub security_voting_threshold: UnitRationalNumber,
 }
 
 impl fmt::Display for PoolVotingThresholds {
@@ -79,5 +82,31 @@ impl<C> cbor::Encode<C> for PoolVotingThresholds {
         e.encode_with(self.security_voting_threshold, ctx)?;
 
         Ok(())
+    }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl Arbitrary for PoolVotingThresholds {
+    type Parameters = ();
+    type Strategy = BoxedStrategy<Self>;
+
+    fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
+        any::<[UnitRationalNumber; 5]>()
+            .prop_map(
+                |[
+                    motion_no_confidence,
+                    committee_normal,
+                    committee_no_confidence,
+                    hard_fork_initiation,
+                    security_voting_threshold,
+                ]| PoolVotingThresholds {
+                    motion_no_confidence,
+                    committee_normal,
+                    committee_no_confidence,
+                    hard_fork_initiation,
+                    security_voting_threshold,
+                },
+            )
+            .boxed()
     }
 }

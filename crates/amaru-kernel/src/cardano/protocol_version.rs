@@ -14,6 +14,9 @@
 
 use std::{fmt, fmt::Debug, str::FromStr};
 
+#[cfg(any(test, feature = "test-utils"))]
+use proptest::prelude::{Arbitrary, BoxedStrategy, Strategy, any};
+
 use crate::cbor;
 
 pub const PROTOCOL_VERSION_10: ProtocolVersion = ProtocolVersion::new(10, 0);
@@ -30,7 +33,7 @@ pub const MINIMUM_SUPPORTED: ProtocolVersion = PROTOCOL_VERSION_10;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ProtocolVersion {
     major: u64,
-    minor: u64,
+    minor: u32,
 }
 
 impl Debug for ProtocolVersion {
@@ -45,7 +48,7 @@ impl ProtocolVersion {
     /// See <https://github.com/IntersectMBO/cardano-ledger/blob/9f6b6f1ab10d7cc730dae3328f4003e7fa55afe2/eras/conway/impl/cddl/data/conway.cddl#L105>
     const MAX_MAJOR: u64 = PROTOCOL_VERSION_12.major();
 
-    pub const fn new(major: u64, minor: u64) -> Self {
+    pub const fn new(major: u64, minor: u32) -> Self {
         Self { major, minor }
     }
 
@@ -53,13 +56,23 @@ impl ProtocolVersion {
         self.major
     }
 
-    pub const fn minor(&self) -> u64 {
+    pub const fn minor(&self) -> u32 {
         self.minor
     }
 
     pub fn can_follow(&self, other: ProtocolVersion) -> bool {
         (self.major == other.major() + 1 && self.minor == 0)
             || (self.major == other.major() && self.minor == other.minor() + 1)
+    }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl Arbitrary for ProtocolVersion {
+    type Parameters = ();
+    type Strategy = BoxedStrategy<Self>;
+
+    fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
+        (0..=Self::MAX_MAJOR, any::<u32>()).prop_map(|(major, minor)| ProtocolVersion::new(major, minor)).boxed()
     }
 }
 
@@ -75,7 +88,7 @@ impl FromStr for ProtocolVersion {
         match &s.split(".").collect::<Vec<_>>()[..] {
             [major, minor] => {
                 let major = major.parse::<u64>().map_err(|e| e.to_string())?;
-                let minor = minor.parse::<u64>().map_err(|e| e.to_string())?;
+                let minor = minor.parse::<u32>().map_err(|e| e.to_string())?;
                 Ok(Self::new(major, minor))
             }
             _ => Err(s.to_string()),
@@ -91,7 +104,7 @@ impl<C> cbor::Encode<C> for ProtocolVersion {
     ) -> Result<(), cbor::encode::Error<W::Error>> {
         e.array(2)?;
         e.u64(self.major)?;
-        e.u64(self.minor)?;
+        e.u32(self.minor)?;
         Ok(())
     }
 }
@@ -104,7 +117,7 @@ impl<'b, C> cbor::Decode<'b, C> for ProtocolVersion {
             if major > Self::MAX_MAJOR {
                 return Err(cbor::decode::Error::message("invalid protocol version's major: too high"));
             }
-            let minor = d.u64()?;
+            let minor = d.u32()?;
             Ok(Self::new(major, minor))
         })
     }

@@ -25,8 +25,8 @@
 use std::{fmt, time::Duration};
 
 use crate::{
-    EPOCH, Effect, ExternalEffect, Name, SendData, StageResponse, serde::SendDataValue, simulation::SimulationRunning,
-    trace_buffer::TraceEntry,
+    EPOCH, Effect, ExternalEffect, Instant, Name, SendData, StageResponse, TrySend, serde::SendDataValue,
+    simulation::SimulationRunning, trace_buffer::TraceEntry,
 };
 
 /// A matcher for a [`TraceEntry`] or a breakpoint [`Effect`].
@@ -173,6 +173,69 @@ pub fn tm_send<'a>(from: &'a str, to: &'a str, msg: impl SendData) -> TraceMatch
     )
 }
 
+/// Creates a `TraceMatch` for a `TrySend` effect. The admission result is the resume, not this effect.
+pub fn tm_try_send<'a>(from: &'a str, to: &'a str, msg: impl SendData) -> TraceMatch<'a> {
+    let description = format!("TrySend(from: {:?}, to: {:?}, msg: {:?})", from, to, msg);
+    TraceMatch::Property(
+        Box::new(move |src| {
+            let Some(Effect::TrySend { from: f, to: t, msg: m }) = src.suspend() else {
+                return false;
+            };
+            f.as_str() == from && t.as_str().contains(to) && msg.test_eq(&**m)
+        }),
+        description,
+    )
+}
+
+/// Creates a `TraceMatch` for the [`StageResponse::TrySend`] that resumes `stage`.
+pub fn tm_resume_try_send(stage: impl AsRef<str>, outcome: TrySend) -> TraceMatch<'static> {
+    TraceEntry::resume(stage, StageResponse::TrySend(outcome)).into()
+}
+
+/// Creates a `TraceMatch` for a `TrySend` whose payload is of type `T`.
+///
+/// The admission result is the resume ([`tm_resume_try_send`]), not this effect.
+/// Use this when the payload cannot be built for [`tm_try_send`] (it contains a [`crate::StageRef`],
+/// or it was injected by [`crate::StageRef::contramap`] before it was traced).
+pub fn tm_try_send_type<'a, T: SendData>(from: &'a str, to: &'a str) -> TraceMatch<'a> {
+    let description = format!("TrySend(from: {:?}, to: {:?}, msg of type {})", from, to, std::any::type_name::<T>());
+    TraceMatch::Property(
+        Box::new(move |src| {
+            let Some(Effect::TrySend { from: f, to: t, msg }) = src.suspend() else {
+                return false;
+            };
+            f.as_str() == from && t.as_str().contains(to) && msg.as_ref().type_id() == std::any::TypeId::of::<T>()
+        }),
+        description,
+    )
+}
+
+/// Creates a `TraceMatch` for a `TrySend` whose payload is of type `T` and satisfies `predicate`.
+///
+/// The admission result is the resume ([`tm_resume_try_send`]), not this effect.
+pub fn tm_try_send_match<'a, T: SendData>(
+    from: &'a str,
+    to: &'a str,
+    predicate: impl Fn(&T) -> bool + Send + 'a,
+) -> TraceMatch<'a> {
+    let description = format!("TrySend(from: {:?}, to: {:?}, msg matching {})", from, to, std::any::type_name::<T>());
+    TraceMatch::Property(
+        Box::new(move |src| {
+            let Some(Effect::TrySend { from: f, to: t, msg }) = src.suspend() else {
+                return false;
+            };
+            if f.as_str() != from || !t.as_str().contains(to) {
+                return false;
+            }
+            let Ok(typed) = msg.as_ref().cast_ref::<T>() else {
+                return false;
+            };
+            predicate(typed)
+        }),
+        description,
+    )
+}
+
 /// Creates a `TraceMatch` for a `Call` effect.
 pub fn tm_call<'a>(from: &'a str, to: &'a str, duration: Duration) -> TraceMatch<'a> {
     let description = format!("Call(from: {:?}, to: {:?}, duration: {:?})", from, to, duration);
@@ -261,7 +324,7 @@ pub fn tm_wire_stage_state<'a, T: SendData>(parent: &'a str, child: &'a str, sta
     let description = format!("WireStage(at_stage: {:?}, name: {:?}, state: {:?})", parent, child, state);
     TraceMatch::Property(
         Box::new(move |src| {
-            let Some(Effect::WireStage { at_stage, name, initial_state, tombstone }) = src.suspend() else {
+            let Some(Effect::WireStage { at_stage, name, initial_state, tombstone, .. }) = src.suspend() else {
                 return false;
             };
             parent == at_stage.as_str()
@@ -287,7 +350,7 @@ pub fn tm_wire_stage_state_supervised<'a, T: SendData, U: SendData>(
     );
     TraceMatch::Property(
         Box::new(move |src| {
-            let Some(Effect::WireStage { at_stage, name, initial_state, tombstone }) = src.suspend() else {
+            let Some(Effect::WireStage { at_stage, name, initial_state, tombstone, .. }) = src.suspend() else {
                 return false;
             };
             parent == at_stage.as_str()
@@ -495,15 +558,43 @@ pub fn assert_trace_match(running: &SimulationRunning, expected: &[TraceMatch<'_
     assert_trace_match_filter(running, expected, &[tm_resume()]);
 }
 
+fn any_clock() -> TraceMatch<'static> {
+    TraceMatch::Property(Box::new(|src| matches!(src.entry(), Some(TraceEntry::Clock(_)))), "Clock(_)".to_string())
+}
+
+fn is_literal_clock(matcher: &TraceMatch<'_>) -> bool {
+    matches!(matcher, TraceMatch::Literal(TraceEntry::Clock(_)))
+}
+
+/// Like [`assert_trace_match`], ignoring simulated time.
+///
+/// Drops `Resume` entries and [`TraceEntry::Clock`] advances (including clock
+/// literals left in `expected`). [`Instant`] values inside the remaining entries
+/// compare equal at any distance, so a sampled effect duration cannot fail a
+/// test that does not assert time. Tests that check a specific instant keep
+/// using [`assert_trace_match`].
+#[track_caller]
+pub fn assert_trace_no_clock(running: &SimulationRunning, expected: &[TraceMatch<'_>]) {
+    let _tolerance = Instant::with_tolerance_for_test(Duration::MAX);
+    let actual = collect_trace_filter(running, &[tm_resume(), any_clock()]);
+    let actual = actual.iter().collect::<Vec<_>>();
+    let expected = expected.iter().filter(|matcher| !is_literal_clock(matcher)).collect::<Vec<_>>();
+    pretty_assertions::assert_eq!(actual, expected);
+}
+
 /// Asserts that the filtered trace contains the given sequence of
 /// [`TraceMatch`] values **in order**, but not necessarily consecutively
 /// (i.e. it is a subsequence match).
 ///
 /// Non-matching entries in the actual trace are skipped when looking for the
-/// next expected matcher.
+/// next expected matcher. [`Instant`] values inside the remaining entries
+/// compare equal at any distance, so a sampled effect duration cannot fail a
+/// subsequence whose subject is not a specific time. [`TraceEntry::Clock`]
+/// advances stay exact: a clock literal still requires that sim-elapsed time.
 #[track_caller]
 #[expect(clippy::panic)]
 pub fn assert_trace_contains(running: &SimulationRunning, expected: &[TraceMatch<'_>]) {
+    let _tolerance = Instant::with_tolerance_for_test(Duration::MAX);
     let trace = collect_trace_filter(running, &[tm_resume()]);
     let mut i = 0usize;
 
@@ -528,9 +619,13 @@ pub fn assert_trace_contains(running: &SimulationRunning, expected: &[TraceMatch
 
 /// Asserts that none of the provided [`TraceMatch`] values appear anywhere
 /// in the filtered trace.
+///
+/// [`Instant`] values compare equal at any distance, matching
+/// [`assert_trace_contains`]. [`TraceEntry::Clock`] advances stay exact.
 #[track_caller]
 #[expect(clippy::panic)]
 pub fn assert_trace_does_not_contain(running: &SimulationRunning, forbidden: &[TraceMatch<'_>]) {
+    let _tolerance = Instant::with_tolerance_for_test(Duration::MAX);
     let trace = collect_trace_filter(running, &[tm_resume()]);
 
     for entry in &trace {
@@ -541,5 +636,49 @@ pub fn assert_trace_does_not_contain(running: &SimulationRunning, forbidden: &[T
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::trace_buffer::TraceEntry;
+
+    #[test]
+    fn try_send_type_and_match_check_payload_and_resume() {
+        let effect = TraceEntry::suspend(Effect::try_send("mgr", "conn-a", Box::new(7u8)));
+        assert_eq!(tm_try_send_type::<u8>("mgr", "conn-a"), effect);
+        assert_eq!(tm_try_send_match("mgr", "conn-a", |n: &u8| *n == 7), effect);
+        assert_ne!(tm_try_send_type::<u16>("mgr", "conn-a"), effect);
+        assert_ne!(tm_try_send_type::<u8>("mgr", "conn-b"), effect);
+        assert_ne!(tm_try_send_match("mgr", "conn-a", |n: &u8| *n == 8), effect);
+        assert_ne!(tm_try_send_match("other", "conn-a", |_: &u8| true), effect);
+
+        let send = TraceEntry::suspend(Effect::send("mgr", "conn-a", Box::new(7u8)));
+        assert_ne!(tm_try_send_type::<u8>("mgr", "conn-a"), send);
+        assert_ne!(tm_try_send_match("mgr", "conn-a", |_: &u8| true), send);
+
+        let full = TraceEntry::resume("mgr", StageResponse::TrySend(TrySend::Full));
+        let queued = TraceEntry::resume("mgr", StageResponse::TrySend(TrySend::Queued));
+        assert_eq!(tm_resume_try_send("mgr", TrySend::Full), full);
+        assert_ne!(tm_resume_try_send("mgr", TrySend::Queued), full);
+        assert_ne!(tm_resume_try_send("other", TrySend::Full), full);
+        assert_ne!(tm_try_send_match("mgr", "conn-a", |_: &u8| true), full);
+        assert_ne!(tm_resume_try_send("mgr", TrySend::Full), effect);
+        assert_eq!(tm_resume_try_send("mgr", TrySend::Queued), queued);
+    }
+
+    #[test]
+    fn clock_entries_stay_exact_when_instants_are_tolerant() {
+        let _tolerance = Instant::with_tolerance_for_test(Duration::MAX);
+        let earlier = TraceEntry::clock(Instant::at_offset(Duration::from_secs(1), Duration::ZERO));
+        let later = TraceEntry::clock(Instant::at_offset(Duration::from_secs(2), Duration::ZERO));
+        assert_ne!(earlier, later);
+        assert_eq!(earlier, TraceEntry::clock(Instant::at_offset(Duration::from_secs(1), Duration::ZERO)));
+        // The same tolerance still equates instants carried inside other entries.
+        assert_eq!(
+            Instant::at_offset(Duration::from_secs(1), Duration::ZERO),
+            Instant::at_offset(Duration::from_secs(2), Duration::ZERO)
+        );
     }
 }

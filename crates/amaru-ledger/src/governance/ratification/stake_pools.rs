@@ -40,23 +40,23 @@ pub fn voting_threshold(
     match proposal {
         ProposalEnum::ProtocolParameters(params_update, _) => {
             if params_update.any_in_security_group() {
-                Some(into_safe_ratio(&voting_thresholds.security_voting_threshold))
+                Some(into_safe_ratio(voting_thresholds.security_voting_threshold.as_ratio()))
             } else {
                 Some(SafeRatio::zero())
             }
         }
 
-        ProposalEnum::HardFork(..) => Some(into_safe_ratio(&voting_thresholds.hard_fork_initiation)),
+        ProposalEnum::HardFork(..) => Some(into_safe_ratio(voting_thresholds.hard_fork_initiation.as_ratio())),
 
         ProposalEnum::ConstitutionalCommittee(ConstitutionalCommitteeUpdate::NoConfidence, _) => {
-            Some(into_safe_ratio(&voting_thresholds.motion_no_confidence))
+            Some(into_safe_ratio(voting_thresholds.motion_no_confidence.as_ratio()))
         }
 
         ProposalEnum::ConstitutionalCommittee(ConstitutionalCommitteeUpdate::ChangeMembers { .. }, _) => {
             Some(if is_state_of_no_confidence {
-                into_safe_ratio(&voting_thresholds.committee_no_confidence)
+                into_safe_ratio(voting_thresholds.committee_no_confidence.as_ratio())
             } else {
-                into_safe_ratio(&voting_thresholds.committee_normal)
+                into_safe_ratio(voting_thresholds.committee_normal.as_ratio())
             })
         }
 
@@ -122,10 +122,9 @@ mod tests {
     use std::{collections::BTreeMap, rc::Rc};
 
     use amaru_kernel::{
-        CertificatePointer, ConstitutionalCommitteeUpdate, Credential, DRep, Hash, Network, PoolId, PoolParams,
-        ProposalEnum, ProtocolParamUpdate, RationalNumber, RewardAccount, SafeRatio, Vote, any_ex_units,
-        any_pool_voting_thresholds, any_proposal_enum, any_proposal_id, any_protocol_params_update,
-        any_rational_number, any_vote_ref, safe_ratio,
+        CertificatePointer, ConstitutionalCommitteeUpdate, Credential, DRep, ExUnits, Hash, Network, PoolId,
+        PoolParams, PoolVotingThresholds, ProposalEnum, ProposalId, ProtocolParamUpdate, RationalNumber, RewardAccount,
+        SafeRatio, UnitRationalNumber, Vote, any_vote_ref, safe_ratio,
     };
     use num::{One, Zero};
     use proptest::{collection, option, prelude::*, sample};
@@ -151,8 +150,8 @@ mod tests {
     proptest! {
         #[test]
         fn prop_voting_threshold_influenced_by_no_confidence(
-            proposal in any_proposal_enum(),
-            thresholds in any_pool_voting_thresholds()
+            proposal in any::<ProposalEnum>(),
+            thresholds in any::<PoolVotingThresholds>()
         ) {
             let result_normal = voting_threshold(false, &thresholds, &proposal);
             let result_no_confidence = voting_threshold(true, &thresholds, &proposal);
@@ -179,8 +178,8 @@ mod tests {
             is_no_confidence in any::<bool>(),
             update_in_security_group in any_protocol_params_update_in_security_group(),
             update_no_security_group in any_protocol_params_update_no_security_group(),
-            parent in option::of(any_proposal_id()),
-            thresholds in any_pool_voting_thresholds()
+            parent in option::of(any::<ProposalId>()),
+            thresholds in any::<PoolVotingThresholds>()
         ) {
             let parent = parent.map(Rc::new);
 
@@ -190,7 +189,7 @@ mod tests {
             let proposal_no_security_group = ProposalEnum::ProtocolParameters(Box::new(update_no_security_group), parent.clone());
             let result_no = voting_threshold(is_no_confidence, &thresholds, &proposal_no_security_group);
 
-            let is_null_threshold = thresholds.security_voting_threshold.numerator == 0;
+            let is_null_threshold = thresholds.security_voting_threshold.numerator() == 0;
 
             prop_assert!(
                 (result_in > Some(SafeRatio::zero()) || is_null_threshold) && result_no == Some(SafeRatio::zero()),
@@ -229,18 +228,18 @@ mod tests {
         let security_group = (
             option::of(any::<u64>()),
             option::of(any::<u64>()),
-            option::of(any::<u64>()),
-            option::of(any::<u64>()),
+            option::of(any::<u32>()),
+            option::of(any::<u32>()),
             option::of(any::<u16>()),
             option::of(any::<u64>()),
-            option::of(any_ex_units()),
+            option::of(any::<ExUnits>()),
+            option::of(any::<u32>()),
             option::of(any::<u64>()),
-            option::of(any::<u64>()),
-            option::of(any_rational_number()),
+            option::of(any::<RationalNumber>()),
         );
 
         (
-            any_protocol_params_update(),
+            any::<ProtocolParamUpdate>(),
             security_group.prop_filter("not all none", |(p0, p1, p2, p3, p4, p5, p6, p7, p8, p9)| {
                 !(p0.is_none()
                     && p1.is_none()
@@ -286,7 +285,7 @@ mod tests {
     }
 
     fn any_protocol_params_update_no_security_group() -> impl Strategy<Value = ProtocolParamUpdate> {
-        any_protocol_params_update().prop_map(|update| ProtocolParamUpdate {
+        any::<ProtocolParamUpdate>().prop_map(|update| ProtocolParamUpdate {
             minfee_a: None,
             minfee_b: None,
             max_block_header_size: None,
@@ -304,7 +303,7 @@ mod tests {
     pub fn any_tally() -> impl Strategy<Value = (ProposalEnum, BTreeMap<PoolId, &'static Vote>, Rc<StakeDistribution>)>
     {
         any_stake_distribution_no_dreps().prop_flat_map(|stake_distribution| {
-            (any_proposal_enum(), any_votes(&stake_distribution), Just(Rc::new(stake_distribution)))
+            (any::<ProposalEnum>(), any_votes(&stake_distribution), Just(Rc::new(stake_distribution)))
                 .prop_map(move |(proposal, votes, stake_distribution)| (proposal, votes, stake_distribution))
         })
     }
@@ -347,7 +346,8 @@ mod tests {
                         vrf: Hash::new([7; 32]),
                         pledge: 0,
                         cost: 0,
-                        margin: RationalNumber { numerator: 0, denominator: 1 },
+                        #[expect(clippy::expect_used)]
+                        margin: UnitRationalNumber::new(0, 1).expect("valid unit ratio"),
                         reward_account: RewardAccount::new(
                             Network::Testnet,
                             Credential::ScriptHash(Hash::new([1; 28])),

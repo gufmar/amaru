@@ -14,14 +14,14 @@
 
 use std::{
     collections::BTreeMap,
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex as StdMutex},
 };
 
 use amaru_kernel::{NetworkName, Point, Slot};
 use amaru_observability::{info, warn};
-use amaru_progress_bar::ProgressBar;
+use amaru_progress_bar::{ProgressBar, ProgressBarExt};
 use anyhow::anyhow;
 use async_trait::async_trait;
 use mithril_client::{
@@ -32,7 +32,10 @@ use mithril_client::{
 use thiserror::Error;
 use tokio::sync::Mutex;
 
-use crate::immutable::{chunk_for_slot, validate_immutable_resume_point, validated_download_boundary};
+use crate::immutable::{
+    chunk_for_slot, immutable_chunk_is_complete, validate_immutable_files, validate_immutable_resume_point,
+    validated_download_boundary,
+};
 
 type ProgressFactory = Arc<dyn Fn(usize, &str) -> Box<dyn ProgressBar + Send + Sync> + Send + Sync>;
 
@@ -45,6 +48,18 @@ pub enum MithrilDownloadStage {
     Downloading { files: u64 },
     VerifyingDatabase { from_chunk: u64, through_chunk: u64, files: u64 },
     DatabaseVerified,
+}
+
+impl MithrilDownloadStage {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::FetchingSnapshot => "fetching_snapshot",
+            Self::ValidatingCertificate => "validating_certificate",
+            Self::Downloading { .. } => "downloading",
+            Self::VerifyingDatabase { .. } => "verifying_database",
+            Self::DatabaseVerified => "database_verified",
+        }
+    }
 }
 
 /// Renderer-independent progress produced by a Mithril database download.
@@ -150,13 +165,13 @@ struct ProgressBarObserver {
 
 #[derive(Default)]
 struct ProgressBarState {
-    progress: Option<Box<dyn ProgressBar>>,
+    progress: Option<(MithrilDownloadStage, Box<dyn ProgressBar>)>,
     completed_files: u64,
 }
 
 impl Drop for ProgressBarState {
     fn drop(&mut self) {
-        if let Some(progress) = self.progress.take() {
+        if let Some((_, progress)) = self.progress.take() {
             progress.clear();
         }
     }
@@ -167,8 +182,18 @@ impl MithrilDownloadObserver for ProgressBarObserver {
         let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match progress {
             MithrilDownloadProgress::StageChanged { stage } => {
-                if let Some(progress) = state.progress.take() {
-                    progress.clear();
+                if let Some((phase, progress)) = state.progress.take() {
+                    progress.finish(|| {
+                        if matches!(phase, MithrilDownloadStage::Downloading { .. }) {
+                            info!(
+                                mithril::progress::PHASE_COMPLETED,
+                                phase = phase.as_str(),
+                                completed_files = state.completed_files
+                            );
+                        } else {
+                            info!(mithril::progress::PHASE_COMPLETED, phase = phase.as_str());
+                        }
+                    });
                 }
                 let (length, template) = match stage {
                     MithrilDownloadStage::FetchingSnapshot => {
@@ -191,15 +216,16 @@ impl MithrilDownloadObserver for ProgressBarObserver {
                     ),
                     MithrilDownloadStage::DatabaseVerified => return,
                 };
-                state.progress = Some((self.with_progress)(usize::try_from(length).unwrap_or(usize::MAX), &template));
+                state.progress =
+                    Some((stage, (self.with_progress)(usize::try_from(length).unwrap_or(usize::MAX), &template)));
             }
             MithrilDownloadProgress::CertificateValidated => {
-                if let Some(progress) = &state.progress {
+                if let Some((_, progress)) = &state.progress {
                     progress.increment();
                 }
             }
             MithrilDownloadProgress::Downloaded { completed_files, .. } => {
-                if let Some(progress) = &state.progress {
+                if let Some((_, progress)) = &state.progress {
                     progress.tick(
                         usize::try_from(completed_files.saturating_sub(state.completed_files)).unwrap_or(usize::MAX),
                     );
@@ -217,6 +243,32 @@ struct CanonicalDownloadState {
     cached_files: u64,
     requested_files: u64,
     files: BTreeMap<String, (u64, u64, bool)>,
+    known_bytes: u64,
+    downloaded_bytes: u64,
+    completed_files: u64,
+}
+
+impl CanonicalDownloadState {
+    fn update_file(&mut self, name: String, size: u64, downloaded: u64) {
+        if let Some((old_size, old_downloaded, was_completed)) = self.files.insert(name, (size, downloaded, false)) {
+            self.known_bytes = self.known_bytes.saturating_sub(old_size);
+            self.downloaded_bytes = self.downloaded_bytes.saturating_sub(old_downloaded);
+            self.completed_files -= u64::from(was_completed);
+        }
+        self.known_bytes = self.known_bytes.saturating_add(size);
+        self.downloaded_bytes = self.downloaded_bytes.saturating_add(downloaded);
+    }
+
+    fn complete_file(&mut self, name: &str) {
+        if let Some((size, downloaded, completed)) = self.files.get_mut(name) {
+            self.downloaded_bytes = self.downloaded_bytes.saturating_sub(*downloaded).saturating_add(*size);
+            if !*completed {
+                self.completed_files += 1;
+            }
+            *downloaded = *size;
+            *completed = true;
+        }
+    }
 }
 
 struct CanonicalFeedbackReceiver {
@@ -237,18 +289,11 @@ impl CanonicalFeedbackReceiver {
     }
 
     fn report(&self, state: &CanonicalDownloadState) {
-        let downloaded_bytes = state
-            .files
-            .values()
-            .fold(state.cached_bytes, |total, (_, downloaded, _)| total.saturating_add(*downloaded));
-        let completed_files =
-            state.cached_files + state.files.values().filter(|(_, _, completed)| *completed).count() as u64;
         let all_sizes_known = state.files.len() as u64 == state.requested_files;
-        let total_bytes = all_sizes_known
-            .then(|| state.files.values().fold(state.cached_bytes, |total, (size, _, _)| total.saturating_add(*size)));
+        let total_bytes = all_sizes_known.then(|| state.cached_bytes.saturating_add(state.known_bytes));
         self.observer.on_progress(MithrilDownloadProgress::Downloaded {
-            downloaded_bytes,
-            completed_files,
+            downloaded_bytes: state.cached_bytes.saturating_add(state.downloaded_bytes),
+            completed_files: state.cached_files + state.completed_files,
             total_files: state.cached_files.saturating_add(state.requested_files),
             total_bytes,
         });
@@ -276,7 +321,7 @@ impl FeedbackReceiver for CanonicalFeedbackReceiver {
                 });
             }
             MithrilEventCardanoDatabase::ImmutableDownloadStarted { immutable_file_number, size, .. } => {
-                state.files.insert(immutable_file_number.to_string(), (size, 0, false));
+                state.update_file(immutable_file_number.to_string(), size, 0);
             }
             MithrilEventCardanoDatabase::ImmutableDownloadProgress {
                 immutable_file_number,
@@ -284,25 +329,19 @@ impl FeedbackReceiver for CanonicalFeedbackReceiver {
                 size,
                 ..
             } => {
-                state.files.insert(immutable_file_number.to_string(), (size, downloaded_bytes, false));
+                state.update_file(immutable_file_number.to_string(), size, downloaded_bytes);
             }
             MithrilEventCardanoDatabase::ImmutableDownloadCompleted { immutable_file_number, .. } => {
-                if let Some((size, downloaded, completed)) = state.files.get_mut(&immutable_file_number.to_string()) {
-                    *downloaded = *size;
-                    *completed = true;
-                }
+                state.complete_file(&immutable_file_number.to_string());
             }
             MithrilEventCardanoDatabase::AncillaryDownloadStarted { size, .. } => {
-                state.files.insert("ancillary".to_string(), (size, 0, false));
+                state.update_file("ancillary".to_string(), size, 0);
             }
             MithrilEventCardanoDatabase::AncillaryDownloadProgress { downloaded_bytes, size, .. } => {
-                state.files.insert("ancillary".to_string(), (size, downloaded_bytes, false));
+                state.update_file("ancillary".to_string(), size, downloaded_bytes);
             }
             MithrilEventCardanoDatabase::AncillaryDownloadCompleted { .. } => {
-                if let Some((size, downloaded, completed)) = state.files.get_mut("ancillary") {
-                    *downloaded = *size;
-                    *completed = true;
-                }
+                state.complete_file("ancillary");
             }
             _ => return,
         }
@@ -389,26 +428,50 @@ async fn download_from_mithril_with_chunk_range(
     let immutable_file_range = immutable_file_range(from_chunk, requested_through_chunk);
     let download_unpack_options =
         DownloadUnpackOptions { allow_override: true, include_ancillary: false, ..DownloadUnpackOptions::default() };
-    info!(mithril::snapshot::DOWNLOAD, target_dir = target_dir.display().to_string(), from_chunk, through_chunk);
-    database_client
-        .download_unpack(&snapshot, &immutable_file_range, &target_dir, download_unpack_options)
-        .await
-        .map_err(MithrilDownloadError::Download)?;
-
     let immutable_file_count = immutable_file_range.length(through_chunk) * 3;
-    observer.on_progress(MithrilDownloadProgress::StageChanged {
-        stage: MithrilDownloadStage::VerifyingDatabase { from_chunk, through_chunk, files: immutable_file_count },
-    });
+    let reuse_cache = cached_range_covers_snapshot(&target_dir.join("immutable"), from_chunk, through_chunk)?;
     info!(mithril::snapshot::VERIFY_DIGESTS, target_dir = target_dir.display().to_string());
     let verified_digests = database_client
         .download_and_verify_digests(&certificate, &snapshot)
         .await
         .map_err(|source| MithrilDownloadError::Validation { source })?;
-    info!(mithril::snapshot::VERIFY_DATABASE, target_dir = target_dir.display().to_string());
-    let merkle_proof = database_client
-        .verify_cardano_database(&certificate, &snapshot, &immutable_file_range, false, &target_dir, &verified_digests)
-        .await
-        .map_err(|source| MithrilDownloadError::Validation { source: source.into() })?;
+    let download = async || {
+        info!(mithril::snapshot::DOWNLOAD, target_dir = target_dir.display().to_string(), from_chunk, through_chunk);
+        database_client
+            .download_unpack(&snapshot, &immutable_file_range, &target_dir, download_unpack_options)
+            .await
+            .map_err(MithrilDownloadError::Download)
+    };
+    let verify_database = async || {
+        observer.on_progress(MithrilDownloadProgress::StageChanged {
+            stage: MithrilDownloadStage::VerifyingDatabase { from_chunk, through_chunk, files: immutable_file_count },
+        });
+        info!(mithril::snapshot::VERIFY_DATABASE, target_dir = target_dir.display().to_string());
+        database_client
+            .verify_cardano_database(
+                &certificate,
+                &snapshot,
+                &immutable_file_range,
+                false,
+                &target_dir,
+                &verified_digests,
+            )
+            .await
+    };
+    if !reuse_cache {
+        download().await?;
+    }
+    let (merkle_proof, reused_cache) = match verify_database().await {
+        Ok(proof) => (proof, reuse_cache),
+        Err(source) if reuse_cache => {
+            warn!(mithril::snapshot::REDOWNLOAD_CACHE, from_chunk, through_chunk, reason = source.to_string());
+            download().await?;
+            let proof =
+                verify_database().await.map_err(|source| MithrilDownloadError::Validation { source: source.into() })?;
+            (proof, false)
+        }
+        Err(source) => return Err(MithrilDownloadError::Validation { source: source.into() }),
+    };
     let message = MessageBuilder::new()
         .compute_cardano_database_message(&certificate, &merkle_proof)
         .await
@@ -418,6 +481,10 @@ async fn download_from_mithril_with_chunk_range(
         return Err(MithrilDownloadError::Validation {
             source: anyhow::anyhow!("Mithril certificate verification failed"),
         });
+    }
+
+    if reused_cache {
+        info!(mithril::snapshot::REUSE_CACHE, from_chunk, through_chunk);
     }
 
     observer.on_progress(MithrilDownloadProgress::StageChanged { stage: MithrilDownloadStage::DatabaseVerified });
@@ -430,6 +497,28 @@ fn immutable_file_range(from_chunk: u64, requested_through_chunk: Option<u64>) -
     requested_through_chunk.map_or(ImmutableFileRange::From(from_chunk), |through_chunk| {
         ImmutableFileRange::Range(from_chunk, through_chunk)
     })
+}
+
+fn cached_range_covers_snapshot(
+    immutable_dir: &Path,
+    from_chunk: u64,
+    through_chunk: u64,
+) -> Result<bool, MithrilDownloadError> {
+    let last_chunk = match validate_immutable_files(immutable_dir) {
+        Ok(last_chunk) => last_chunk,
+        Err(source)
+            if source
+                .downcast_ref::<io::Error>()
+                .is_none_or(|error| matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::InvalidData)) =>
+        {
+            warn!(mithril::snapshot::REDOWNLOAD_CACHE, from_chunk, through_chunk, reason = source.to_string());
+            return Ok(false);
+        }
+        Err(source) => return Err(MithrilDownloadError::InvalidCache { source }),
+    };
+    Ok(last_chunk == Some(through_chunk)
+        && immutable_chunk_is_complete(immutable_dir, from_chunk)
+            .map_err(|source| MithrilDownloadError::Download(source.into()))?)
 }
 
 fn requested_through_chunk(

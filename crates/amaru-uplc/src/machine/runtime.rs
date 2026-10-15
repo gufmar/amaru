@@ -18,7 +18,7 @@ use core::str;
 use std::array::TryFromSliceError;
 
 use bumpalo::collections::{CollectIn, String as BumpString, Vec as BumpVec};
-use num::{Integer as NumInteger, Signed, Zero};
+use dashu_base::{BitTest, DivRem, RemEuclid, UnsignedAbs, ring::ExtendedGcd};
 
 use super::{Machine, MachineError, RuntimeError, value::Value};
 use crate::{
@@ -26,47 +26,52 @@ use crate::{
     binder::Eval,
     bls::{Compressable, SCALAR_PERIOD},
     builtin::DefaultFunction,
-    constant::{self, Constant, Integer},
+    constant::{
+        self, Constant, Integer, IntegerExt, Natural, integer_from_bytes, integer_to_u8, integer_to_usize,
+        natural_to_u64,
+    },
     data::PlutusData,
     ledger_value::{self, LedgerValue, ValueError},
-    machine::cost_model::cost_argument::{DataNodeCount, DataSize, FixedSize, integer_log2},
+    machine::cost_model::cost_argument::{DataNodeCount, FixedSize, ListLength, StringSize, integer_log2},
     typ::Type,
 };
 
 pub const INTEGER_TO_BYTE_STRING_MAXIMUM_OUTPUT_LENGTH: i64 = 8192;
+pub const WRITE_BITS_MAXIMUM_INPUT_LENGTH: usize = 4096;
+
+const CARDANO_INTEGER_MAXIMUM_BITS: u64 = 262_143;
+
+/// Return whether an integer is representable by Cardano's bounded arithmetic builtins.
+fn fits_cardano_integer_range(integer: &Integer) -> bool {
+    fits_signed_integer_range(integer, CARDANO_INTEGER_MAXIMUM_BITS)
+}
+
+/// Return whether an integer fits within `[-2^maximum_bits, 2^maximum_bits - 1]`.
+fn fits_signed_integer_range(integer: &Integer, maximum_bits: u64) -> bool {
+    let bits = integer.bits();
+
+    if bits <= maximum_bits {
+        return true;
+    }
+
+    if bits != maximum_bits + 1 || !integer.is_negative() {
+        return false;
+    }
+
+    integer.clone().unsigned_abs() == Natural::from(1u8) << maximum_bits as usize
+}
 
 /// Check that an integer fits in a signed 4096-bit range: [-(2^4095), 2^4095 - 1].
 /// Used by multiScalarMul to limit scalar sizes.
 fn check_multi_scalar_range(int: &Integer) -> Result<(), RuntimeError<'_>> {
-    let bits = int.bits();
-
-    if bits <= 4095 {
-        return Ok(());
-    }
-
-    if bits > 4096 {
-        return Err(RuntimeError::MultiScalarMulScalarOutOfBounds);
-    }
-
-    // bits == 4096: only valid if negative and exactly -(2^4095)
-    if !int.is_negative() {
-        return Err(RuntimeError::MultiScalarMulScalarOutOfBounds);
-    }
-
-    let magnitude = int.magnitude();
-
-    use num::One;
-
-    let two_pow_4095 = num::BigUint::one() << 4095;
-
-    if *magnitude == two_pow_4095 { Ok(()) } else { Err(RuntimeError::MultiScalarMulScalarOutOfBounds) }
+    fits_signed_integer_range(int, 4095).then_some(()).ok_or(RuntimeError::MultiScalarMulScalarOutOfBounds)
 }
 
 /// Reduce scalar mod SCALAR_PERIOD, convert to LE bytes, and append to the output buffer.
 /// Caller must validate the scalar range first via `check_multi_scalar_range`.
 fn prepare_msm_scalar(si: &Integer, scalar_buf: &mut blst::blst_scalar, scalar_bytes: &mut Vec<u8>) {
-    let si = si.mod_floor(&SCALAR_PERIOD);
-    let (_, be_bytes) = si.to_bytes_be();
+    let si = si.rem_euclid(&*SCALAR_PERIOD);
+    let be_bytes = si.to_be_bytes();
 
     // Zero-padded big-endian scalar on the stack (always 32 bytes).
     const SIZE: usize = size_of::<blst::blst_scalar>();
@@ -77,6 +82,33 @@ fn prepare_msm_scalar(si: &Integer, scalar_buf: &mut blst::blst_scalar, scalar_b
         blst::blst_scalar_from_bendian(scalar_buf as *mut _, padded.as_ptr() as *const _);
     }
     scalar_bytes.extend_from_slice(&scalar_buf.b);
+}
+
+/// Raise `base` to `exponent` modulo `modulus` without materializing the full power.
+fn modular_pow(mut base: Natural, mut exponent: Natural, modulus: &Natural) -> Natural {
+    let mut result = Natural::from(1u8) % modulus;
+
+    while exponent != Natural::ZERO {
+        if exponent.bit(0) {
+            result = (result * &base) % modulus;
+        }
+
+        exponent >>= 1usize;
+        base = (&base * &base) % modulus;
+    }
+
+    result
+}
+
+/// Divide with a quotient rounded toward negative infinity and a divisor-signed remainder.
+fn floor_div_mod(dividend: &Integer, divisor: &Integer) -> (Integer, Integer) {
+    let (quotient, remainder) = dividend.div_rem(divisor);
+
+    if remainder != Integer::ZERO && dividend.is_negative() != divisor.is_negative() {
+        (quotient - Integer::from(1u8), remainder + divisor)
+    } else {
+        (quotient, remainder)
+    }
 }
 
 #[derive(Debug)]
@@ -102,11 +134,12 @@ where
     }
 
     pub fn push(&self, arena: &'a Arena, arg: &'a Value<'a, V>) -> &'a Self {
-        let new_runtime = arena.alloc(Runtime { args: self.args.clone(), fun: self.fun, forces: self.forces });
+        // `BumpVec::clone` has no spare capacity, so appending to it allocates and copies the arguments twice.
+        let mut args = BumpVec::with_capacity_in(self.args.len() + 1, arena.as_bump());
+        args.extend_from_slice(&self.args);
+        args.push(arg);
 
-        new_runtime.args.push(arg);
-
-        new_runtime
+        arena.alloc(Runtime { args, fun: self.fun, forces: self.forces })
     }
 
     pub fn needs_force(&self) -> bool {
@@ -123,14 +156,49 @@ where
 }
 
 impl<'a> Machine<'a> {
+    fn unwrap_bounded_integer<V>(&self, value: &'a Value<'a, V>) -> Result<&'a Integer, MachineError<'a, V>>
+    where
+        V: Eval<'a>,
+    {
+        let integer = value.unwrap_integer()?;
+
+        if self.costs.semantics.enforces_integer_bounds() && !fits_cardano_integer_range(integer) {
+            return Err(MachineError::integer_out_of_bounds(integer));
+        }
+
+        Ok(integer)
+    }
+
+    fn string_size<'s>(&self, string: &'s str) -> StringSize<'s> {
+        if self.costs.semantics.costs_strings_by_utf8_bytes() {
+            StringSize::Utf8Bytes(string)
+        } else {
+            StringSize::Characters(string)
+        }
+    }
+
+    /// The absolute shift amount used for costing, saturated to `i64::MAX` where the semantics allow larger amounts.
+    fn shift_amount_cost<V>(&self, shift: &'a Integer) -> Result<i64, MachineError<'a, V>>
+    where
+        V: Eval<'a>,
+    {
+        match i64::try_from(shift) {
+            Ok(shift) => Ok(shift.saturating_abs()),
+            Err(_) if self.costs.semantics.bounds_shift_amount_to_int64() => {
+                Err(MachineError::outside_usize_bounds(shift))
+            }
+            Err(_) => Ok(i64::MAX),
+        }
+    }
+
     pub fn call<V>(&mut self, runtime: &'a Runtime<'a, V>) -> Result<&'a Value<'a, V>, MachineError<'a, V>>
     where
         V: Eval<'a>,
     {
         match runtime.fun {
             DefaultFunction::AddInteger => {
-                let arg1 = runtime.args[0].unwrap_integer()?;
-                let arg2 = runtime.args[1].unwrap_integer()?;
+                let arg1 = self.unwrap_bounded_integer(runtime.args[0])?;
+                let arg2 = self.unwrap_bounded_integer(runtime.args[1])?;
 
                 let budget =
                     self.costs.builtin_costs.get_cost(DefaultFunction::AddInteger, &[arg1.into(), arg2.into()]);
@@ -170,8 +238,10 @@ impl<'a> Machine<'a> {
                 let arg1 = runtime.args[0].unwrap_string()?;
                 let arg2 = runtime.args[1].unwrap_string()?;
 
-                let budget =
-                    self.costs.builtin_costs.get_cost(DefaultFunction::AppendString, &[(&arg1).into(), (&arg2).into()]);
+                let budget = self.costs.builtin_costs.get_cost(
+                    DefaultFunction::AppendString,
+                    &[(&self.string_size(arg1)).into(), (&self.string_size(arg2)).into()],
+                );
 
                 self.spend_budget(budget)?;
 
@@ -200,7 +270,10 @@ impl<'a> Machine<'a> {
                 Ok(value)
             }
             DefaultFunction::Blake2b_256 => {
-                use cryptoxide::{blake2b::Blake2b, digest::Digest};
+                use blake2::{
+                    Blake2b,
+                    digest::{Digest as _, consts::U32},
+                };
 
                 let arg1 = runtime.args[0].unwrap_byte_string()?;
 
@@ -208,20 +281,11 @@ impl<'a> Machine<'a> {
 
                 self.spend_budget(budget)?;
 
-                let mut digest = BumpVec::with_capacity_in(32, self.arena.as_bump());
+                let mut hasher = Blake2b::<U32>::new();
+                hasher.update(arg1);
+                let digest = self.arena.alloc(hasher.finalize());
 
-                unsafe {
-                    digest.set_len(32);
-                }
-
-                let mut context = Blake2b::new(32);
-
-                context.input(arg1);
-                context.result(&mut digest);
-
-                let digest = self.arena.alloc(digest);
-
-                let value = Value::byte_string(self.arena, digest);
+                let value = Value::byte_string(self.arena, digest.as_slice());
 
                 Ok(value)
             }
@@ -256,7 +320,7 @@ impl<'a> Machine<'a> {
                 let budget = self
                     .costs
                     .builtin_costs
-                    .get_cost(DefaultFunction::ChooseList, &[(&list).into(), arg2.into(), arg3.into()]);
+                    .get_cost(DefaultFunction::ChooseList, &[(&ListLength(list)).into(), arg2.into(), arg3.into()]);
 
                 self.spend_budget(budget)?;
 
@@ -276,7 +340,7 @@ impl<'a> Machine<'a> {
                 Ok(arg2)
             }
             DefaultFunction::ConsByteString => {
-                let arg1 = runtime.args[0].unwrap_integer()?;
+                let arg1 = self.unwrap_bounded_integer(runtime.args[0])?;
                 let arg2 = runtime.args[1].unwrap_byte_string()?;
 
                 let budget =
@@ -285,13 +349,13 @@ impl<'a> Machine<'a> {
                 self.spend_budget(budget)?;
 
                 let byte: u8 = if self.costs.semantics.cons_byte_string_range_checks() {
-                    if *arg1 > Integer::from(255) || *arg1 < Integer::from(0) {
+                    if *arg1 > Integer::from(255u8) || *arg1 < Integer::ZERO {
                         return Err(MachineError::byte_string_cons_not_a_byte(arg1));
                     }
-                    arg1.try_into().expect("should cast to u8 just fine")
+                    integer_to_u8(arg1).expect("should cast to u8 just fine")
                 } else {
-                    let wrap: Integer = arg1 % 256;
-                    wrap.try_into().expect("should cast to u64 just fine")
+                    let wrap = arg1.rem_euclid(&Integer::from(256u16));
+                    u8::try_from(&wrap).expect("a value reduced mod 256 fits in a u8")
                 };
 
                 let mut ret = BumpVec::with_capacity_in(arg2.len() + 1, self.arena.as_bump());
@@ -310,8 +374,10 @@ impl<'a> Machine<'a> {
                 let tag = runtime.args[0].unwrap_integer()?;
                 let (typ, fields) = runtime.args[1].unwrap_list()?;
 
-                let budget =
-                    self.costs.builtin_costs.get_cost(DefaultFunction::ConstrData, &[tag.into(), (&fields).into()]);
+                let budget = self
+                    .costs
+                    .builtin_costs
+                    .get_cost(DefaultFunction::ConstrData, &[tag.into(), (&ListLength(fields)).into()]);
 
                 self.spend_budget(budget)?;
 
@@ -319,7 +385,15 @@ impl<'a> Machine<'a> {
                     return Err(MachineError::type_mismatch(Type::Data, runtime.args[1].unwrap_constant()?));
                 }
 
-                let tag = tag.try_into().expect("should cast to u64 just fine");
+                // NOTE:
+                // From pv11, Haskell requires the tag to fit in a Word64, so a tag outside
+                // [0, 2^64) fails the evaluation exactly as it does here. At protocol version 10,
+                // Haskell accepts any Integer tag and evaluation can carry on with a Constr that
+                // PlutusData cannot represent.
+                //
+                // We fail those too, which diverges from Haskell only if a historical pv10 transaction builds such a tag and still succeeds.
+                // No such transaction has been seen, but one could, in theory, exist on a private network.
+                let tag = u64::try_from(tag).map_err(|_| MachineError::constr_tag_out_of_bounds(tag))?;
                 let fields: BumpVec<'_, _> = fields
                     .iter()
                     .map(|d| match d {
@@ -351,8 +425,8 @@ impl<'a> Machine<'a> {
                 Ok(value)
             }
             DefaultFunction::DivideInteger => {
-                let arg1 = runtime.args[0].unwrap_integer()?;
-                let arg2 = runtime.args[1].unwrap_integer()?;
+                let arg1 = self.unwrap_bounded_integer(runtime.args[0])?;
+                let arg2 = self.unwrap_bounded_integer(runtime.args[1])?;
 
                 let budget =
                     self.costs.builtin_costs.get_cost(DefaultFunction::DivideInteger, &[arg1.into(), arg2.into()]);
@@ -360,7 +434,7 @@ impl<'a> Machine<'a> {
                 self.spend_budget(budget)?;
 
                 if !arg2.is_zero() {
-                    let (result, _) = arg1.div_mod_floor(arg2);
+                    let (result, _) = floor_div_mod(arg1, arg2);
 
                     let new = self.arena.alloc_integer(result);
 
@@ -374,7 +448,8 @@ impl<'a> Machine<'a> {
             DefaultFunction::EncodeUtf8 => {
                 let arg1 = runtime.args[0].unwrap_string()?;
 
-                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::EncodeUtf8, &[(&arg1).into()]);
+                let budget =
+                    self.costs.builtin_costs.get_cost(DefaultFunction::EncodeUtf8, &[(&self.string_size(arg1)).into()]);
 
                 self.spend_budget(budget)?;
 
@@ -438,8 +513,10 @@ impl<'a> Machine<'a> {
                 let arg1 = runtime.args[0].unwrap_string()?;
                 let arg2 = runtime.args[1].unwrap_string()?;
 
-                let budget =
-                    self.costs.builtin_costs.get_cost(DefaultFunction::EqualsString, &[(&arg1).into(), (&arg2).into()]);
+                let budget = self.costs.builtin_costs.get_cost(
+                    DefaultFunction::EqualsString,
+                    &[(&self.string_size(arg1)).into(), (&self.string_size(arg2)).into()],
+                );
 
                 self.spend_budget(budget)?;
 
@@ -461,7 +538,8 @@ impl<'a> Machine<'a> {
             DefaultFunction::HeadList => {
                 let (_, list) = runtime.args[0].unwrap_list()?;
 
-                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::HeadList, &[(&list).into()]);
+                let budget =
+                    self.costs.builtin_costs.get_cost(DefaultFunction::HeadList, &[(&ListLength(list)).into()]);
 
                 self.spend_budget(budget)?;
 
@@ -507,16 +585,15 @@ impl<'a> Machine<'a> {
 
                 self.spend_budget(budget)?;
 
-                let index: i128 = arg2.try_into().unwrap();
+                match usize::try_from(arg2).ok().and_then(|index| arg1.get(index)) {
+                    Some(byte) => {
+                        let result: Integer = (*byte).into();
+                        let new = self.arena.alloc_integer(result);
+                        let value = Value::integer(self.arena, new);
 
-                if 0 <= index && (index as usize) < arg1.len() {
-                    let result: Integer = arg1[index as usize].into();
-                    let new = self.arena.alloc_integer(result);
-                    let value = Value::integer(self.arena, new);
-
-                    Ok(value)
-                } else {
-                    Err(MachineError::byte_string_out_of_bounds(arg1, arg2))
+                        Ok(value)
+                    }
+                    None => Err(MachineError::byte_string_out_of_bounds(arg1, arg2)),
                 }
             }
             DefaultFunction::LengthOfByteString => {
@@ -568,8 +645,8 @@ impl<'a> Machine<'a> {
                 Ok(value)
             }
             DefaultFunction::LessThanEqualsInteger => {
-                let arg1 = runtime.args[0].unwrap_integer()?;
-                let arg2 = runtime.args[1].unwrap_integer()?;
+                let arg1 = self.unwrap_bounded_integer(runtime.args[0])?;
+                let arg2 = self.unwrap_bounded_integer(runtime.args[1])?;
 
                 let budget = self
                     .costs
@@ -585,8 +662,8 @@ impl<'a> Machine<'a> {
                 Ok(value)
             }
             DefaultFunction::LessThanInteger => {
-                let arg1 = runtime.args[0].unwrap_integer()?;
-                let arg2 = runtime.args[1].unwrap_integer()?;
+                let arg1 = self.unwrap_bounded_integer(runtime.args[0])?;
+                let arg2 = self.unwrap_bounded_integer(runtime.args[1])?;
 
                 let budget =
                     self.costs.builtin_costs.get_cost(DefaultFunction::LessThanInteger, &[arg1.into(), arg2.into()]);
@@ -602,7 +679,8 @@ impl<'a> Machine<'a> {
             DefaultFunction::ListData => {
                 let (typ, fields) = runtime.args[0].unwrap_list()?;
 
-                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::ListData, &[(&fields).into()]);
+                let budget =
+                    self.costs.builtin_costs.get_cost(DefaultFunction::ListData, &[(&ListLength(fields)).into()]);
 
                 self.spend_budget(budget)?;
 
@@ -633,7 +711,7 @@ impl<'a> Machine<'a> {
                     ));
                 }
 
-                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::MapData, &[(&list).into()]);
+                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::MapData, &[(&ListLength(list)).into()]);
 
                 self.spend_budget(budget)?;
 
@@ -661,7 +739,10 @@ impl<'a> Machine<'a> {
                 let item = runtime.args[0].unwrap_constant()?;
                 let (typ, list) = runtime.args[1].unwrap_list()?;
 
-                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::MkCons, &[item.into(), (&list).into()]);
+                let budget = self
+                    .costs
+                    .builtin_costs
+                    .get_cost(DefaultFunction::MkCons, &[item.into(), (&ListLength(list)).into()]);
 
                 self.spend_budget(budget)?;
 
@@ -741,8 +822,8 @@ impl<'a> Machine<'a> {
                 Ok(value)
             }
             DefaultFunction::ModInteger => {
-                let arg1 = runtime.args[0].unwrap_integer()?;
-                let arg2 = runtime.args[1].unwrap_integer()?;
+                let arg1 = self.unwrap_bounded_integer(runtime.args[0])?;
+                let arg2 = self.unwrap_bounded_integer(runtime.args[1])?;
 
                 let budget =
                     self.costs.builtin_costs.get_cost(DefaultFunction::ModInteger, &[arg1.into(), arg2.into()]);
@@ -750,7 +831,7 @@ impl<'a> Machine<'a> {
                 self.spend_budget(budget)?;
 
                 if !arg2.is_zero() {
-                    let (_, result) = arg1.div_mod_floor(arg2);
+                    let (_, result) = floor_div_mod(arg1, arg2);
                     let result = self.arena.alloc_integer(result);
                     let value = Value::integer(self.arena, result);
 
@@ -760,8 +841,8 @@ impl<'a> Machine<'a> {
                 }
             }
             DefaultFunction::MultiplyInteger => {
-                let arg1 = runtime.args[0].unwrap_integer()?;
-                let arg2 = runtime.args[1].unwrap_integer()?;
+                let arg1 = self.unwrap_bounded_integer(runtime.args[0])?;
+                let arg2 = self.unwrap_bounded_integer(runtime.args[1])?;
 
                 let budget =
                     self.costs.builtin_costs.get_cost(DefaultFunction::MultiplyInteger, &[arg1.into(), arg2.into()]);
@@ -779,7 +860,8 @@ impl<'a> Machine<'a> {
             DefaultFunction::NullList => {
                 let (_, list) = runtime.args[0].unwrap_list()?;
 
-                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::NullList, &[(&list).into()]);
+                let budget =
+                    self.costs.builtin_costs.get_cost(DefaultFunction::NullList, &[(&ListLength(list)).into()]);
 
                 self.spend_budget(budget)?;
 
@@ -788,8 +870,8 @@ impl<'a> Machine<'a> {
                 Ok(value)
             }
             DefaultFunction::QuotientInteger => {
-                let arg1 = runtime.args[0].unwrap_integer()?;
-                let arg2 = runtime.args[1].unwrap_integer()?;
+                let arg1 = self.unwrap_bounded_integer(runtime.args[0])?;
+                let arg2 = self.unwrap_bounded_integer(runtime.args[1])?;
 
                 let budget =
                     self.costs.builtin_costs.get_cost(DefaultFunction::QuotientInteger, &[arg1.into(), arg2.into()]);
@@ -806,8 +888,8 @@ impl<'a> Machine<'a> {
                 }
             }
             DefaultFunction::RemainderInteger => {
-                let arg1 = runtime.args[0].unwrap_integer()?;
-                let arg2 = runtime.args[1].unwrap_integer()?;
+                let arg1 = self.unwrap_bounded_integer(runtime.args[0])?;
+                let arg2 = self.unwrap_bounded_integer(runtime.args[1])?;
 
                 let budget =
                     self.costs.builtin_costs.get_cost(DefaultFunction::RemainderInteger, &[arg1.into(), arg2.into()]);
@@ -836,7 +918,7 @@ impl<'a> Machine<'a> {
                 Ok(value)
             }
             DefaultFunction::Sha2_256 => {
-                use cryptoxide::{digest::Digest, sha2::Sha256};
+                use sha2::{Digest as _, Sha256};
 
                 let arg1 = runtime.args[0].unwrap_byte_string()?;
 
@@ -845,25 +927,15 @@ impl<'a> Machine<'a> {
                 self.spend_budget(budget)?;
 
                 let mut hasher = Sha256::new();
+                hasher.update(arg1);
+                let bytes = self.arena.alloc(hasher.finalize());
 
-                hasher.input(arg1);
-
-                let mut bytes = BumpVec::with_capacity_in(hasher.output_bytes(), self.arena.as_bump());
-
-                unsafe {
-                    bytes.set_len(hasher.output_bytes());
-                }
-
-                hasher.result(&mut bytes);
-
-                let bytes = self.arena.alloc(bytes);
-
-                let value = Value::byte_string(self.arena, bytes);
+                let value = Value::byte_string(self.arena, bytes.as_slice());
 
                 Ok(value)
             }
             DefaultFunction::Sha3_256 => {
-                use cryptoxide::{digest::Digest, sha3::Sha3_256};
+                use sha3::{Digest as _, Sha3_256};
 
                 let arg1 = runtime.args[0].unwrap_byte_string()?;
 
@@ -872,20 +944,10 @@ impl<'a> Machine<'a> {
                 self.spend_budget(budget)?;
 
                 let mut hasher = Sha3_256::new();
+                hasher.update(arg1);
+                let bytes = self.arena.alloc(hasher.finalize());
 
-                hasher.input(arg1);
-
-                let mut bytes = BumpVec::with_capacity_in(hasher.output_bytes(), self.arena.as_bump());
-
-                unsafe {
-                    bytes.set_len(hasher.output_bytes());
-                }
-
-                hasher.result(&mut bytes);
-
-                let bytes = self.arena.alloc(bytes);
-
-                let value = Value::byte_string(self.arena, bytes);
+                let value = Value::byte_string(self.arena, bytes.as_slice());
 
                 Ok(value)
             }
@@ -903,18 +965,18 @@ impl<'a> Machine<'a> {
 
                 let skip: usize = if *arg1 < Integer::ZERO {
                     0
-                } else if *arg1 > arg3.len().into() {
+                } else if *arg1 > Integer::from(arg3.len()) {
                     arg3.len()
                 } else {
-                    arg1.try_into().expect("should cast to usize just fine")
+                    integer_to_usize(arg1).expect("should cast to usize just fine")
                 };
 
                 let take: usize = if *arg2 < Integer::ZERO {
                     0
-                } else if *arg2 > arg3.len().into() {
+                } else if *arg2 > Integer::from(arg3.len()) {
                     arg3.len()
                 } else {
-                    arg2.try_into().expect("should cast to usize just fine")
+                    integer_to_usize(arg2).expect("should cast to usize just fine")
                 };
 
                 let skip_take: usize = if skip + take > arg3.len() { arg3.len() } else { skip + take };
@@ -935,8 +997,8 @@ impl<'a> Machine<'a> {
                 Ok(value)
             }
             DefaultFunction::SubtractInteger => {
-                let arg1 = runtime.args[0].unwrap_integer()?;
-                let arg2 = runtime.args[1].unwrap_integer()?;
+                let arg1 = self.unwrap_bounded_integer(runtime.args[0])?;
+                let arg2 = self.unwrap_bounded_integer(runtime.args[1])?;
 
                 let budget =
                     self.costs.builtin_costs.get_cost(DefaultFunction::SubtractInteger, &[arg1.into(), arg2.into()]);
@@ -954,7 +1016,8 @@ impl<'a> Machine<'a> {
             DefaultFunction::TailList => {
                 let (t1, list) = runtime.args[0].unwrap_list()?;
 
-                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::TailList, &[(&list).into()]);
+                let budget =
+                    self.costs.builtin_costs.get_cost(DefaultFunction::TailList, &[(&ListLength(list)).into()]);
 
                 self.spend_budget(budget)?;
 
@@ -981,9 +1044,10 @@ impl<'a> Machine<'a> {
                 Ok(arg2)
             }
             DefaultFunction::UnBData => {
-                let bs = runtime.args[0].unwrap_constant()?.unwrap_data()?.unwrap_byte_string()?;
+                let data = runtime.args[0].unwrap_constant()?.unwrap_data()?;
+                let bs = data.unwrap_byte_string()?;
 
-                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::UnBData, &[(&DataSize(bs)).into()]);
+                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::UnBData, &[data.into()]);
 
                 self.spend_budget(budget)?;
 
@@ -992,10 +1056,10 @@ impl<'a> Machine<'a> {
                 Ok(value)
             }
             DefaultFunction::UnConstrData => {
-                let (tag, fields) = runtime.args[0].unwrap_constant()?.unwrap_data()?.unwrap_constr()?;
+                let data = runtime.args[0].unwrap_constant()?.unwrap_data()?;
+                let (tag, fields) = data.unwrap_constr()?;
 
-                let budget =
-                    self.costs.builtin_costs.get_cost(DefaultFunction::UnConstrData, &[(&DataSize(fields)).into()]);
+                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::UnConstrData, &[data.into()]);
 
                 self.spend_budget(budget)?;
 
@@ -1016,9 +1080,10 @@ impl<'a> Machine<'a> {
                 Ok(value)
             }
             DefaultFunction::UnIData => {
-                let i = runtime.args[0].unwrap_constant()?.unwrap_data()?.unwrap_integer()?;
+                let data = runtime.args[0].unwrap_constant()?.unwrap_data()?;
+                let i = data.unwrap_integer()?;
 
-                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::UnIData, &[(&DataSize(i)).into()]);
+                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::UnIData, &[data.into()]);
 
                 self.spend_budget(budget)?;
 
@@ -1027,10 +1092,10 @@ impl<'a> Machine<'a> {
                 Ok(value)
             }
             DefaultFunction::UnListData => {
-                let list = runtime.args[0].unwrap_constant()?.unwrap_data()?.unwrap_list()?;
+                let data = runtime.args[0].unwrap_constant()?.unwrap_data()?;
+                let list = data.unwrap_list()?;
 
-                let budget =
-                    self.costs.builtin_costs.get_cost(DefaultFunction::UnListData, &[(&DataSize(list)).into()]);
+                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::UnListData, &[data.into()]);
 
                 self.spend_budget(budget)?;
 
@@ -1045,9 +1110,10 @@ impl<'a> Machine<'a> {
                 Ok(value)
             }
             DefaultFunction::UnMapData => {
-                let map = runtime.args[0].unwrap_constant()?.unwrap_data()?.unwrap_map()?;
+                let data = runtime.args[0].unwrap_constant()?.unwrap_data()?;
+                let map = data.unwrap_map()?;
 
-                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::UnMapData, &[(&DataSize(map)).into()]);
+                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::UnMapData, &[data.into()]);
 
                 self.spend_budget(budget)?;
 
@@ -1076,7 +1142,7 @@ impl<'a> Machine<'a> {
                 Ok(value)
             }
             DefaultFunction::VerifyEcdsaSecp256k1Signature => {
-                use secp256k1::{Message, PublicKey, Secp256k1, ecdsa::Signature};
+                use secp256k1::{Error, Message, PublicKey, Secp256k1, ecdsa::Signature};
 
                 let public_key = runtime.args[0].unwrap_byte_string()?;
                 let message = runtime.args[1].unwrap_byte_string()?;
@@ -1088,6 +1154,10 @@ impl<'a> Machine<'a> {
                 );
 
                 self.spend_budget(budget)?;
+
+                if public_key.len() != 33 {
+                    return Err(MachineError::secp256k1(Error::InvalidPublicKey));
+                }
 
                 let secp = Secp256k1::verification_only();
 
@@ -1104,7 +1174,7 @@ impl<'a> Machine<'a> {
                 Ok(value)
             }
             DefaultFunction::VerifyEd25519Signature => {
-                use cryptoxide::ed25519;
+                use ed25519_dalek::{Signature, VerifyingKey};
 
                 let public_key = runtime.args[0].unwrap_byte_string()?;
                 let message = runtime.args[1].unwrap_byte_string()?;
@@ -1125,7 +1195,9 @@ impl<'a> Machine<'a> {
                     .try_into()
                     .map_err(|e: TryFromSliceError| MachineError::unexpected_ed25519_signature_length(e))?;
 
-                let valid = ed25519::verify(message, &public_key, &signature);
+                let signature = Signature::from_bytes(&signature);
+                let valid = VerifyingKey::from_bytes(&public_key)
+                    .is_ok_and(|public_key| public_key.verify_strict(message, &signature).is_ok());
 
                 let value = Value::bool(self.arena, valid);
 
@@ -1275,8 +1347,8 @@ impl<'a> Machine<'a> {
 
                 let size_scalar = size_of::<blst::blst_scalar>();
 
-                let arg1 = arg1.mod_floor(&SCALAR_PERIOD);
-                let (_, mut arg1) = arg1.to_bytes_be();
+                let arg1 = arg1.rem_euclid(&*SCALAR_PERIOD);
+                let mut arg1 = arg1.to_be_bytes().into_vec();
 
                 if size_scalar > arg1.len() {
                     let diff = size_scalar - arg1.len();
@@ -1437,17 +1509,14 @@ impl<'a> Machine<'a> {
 
                 let size_scalar = size_of::<blst::blst_scalar>();
 
-                let arg1 = arg1.mod_floor(&SCALAR_PERIOD);
+                let arg1 = arg1.rem_euclid(&*SCALAR_PERIOD);
 
-                let (_, mut arg1) = arg1.to_bytes_be();
+                let mut arg1 = arg1.to_be_bytes().into_vec();
 
                 if size_scalar > arg1.len() {
                     let diff = size_scalar - arg1.len();
 
                     let mut new_vec = vec![0; diff];
-                    unsafe {
-                        new_vec.set_len(diff);
-                    }
 
                     new_vec.append(&mut arg1);
 
@@ -1555,7 +1624,7 @@ impl<'a> Machine<'a> {
                 Ok(value)
             }
             DefaultFunction::Keccak_256 => {
-                use cryptoxide::{digest::Digest, sha3::Keccak256};
+                use sha3::{Digest as _, Keccak256};
 
                 let arg1 = runtime.args[0].unwrap_byte_string()?;
 
@@ -1564,25 +1633,18 @@ impl<'a> Machine<'a> {
                 self.spend_budget(budget)?;
 
                 let mut hasher = Keccak256::new();
+                hasher.update(arg1);
+                let bytes = self.arena.alloc(hasher.finalize());
 
-                hasher.input(arg1);
-
-                let mut bytes = BumpVec::with_capacity_in(hasher.output_bytes(), self.arena.as_bump());
-
-                unsafe {
-                    bytes.set_len(hasher.output_bytes());
-                }
-
-                hasher.result(&mut bytes);
-
-                let bytes = self.arena.alloc(bytes);
-
-                let value = Value::byte_string(self.arena, bytes);
+                let value = Value::byte_string(self.arena, bytes.as_slice());
 
                 Ok(value)
             }
             DefaultFunction::Blake2b_224 => {
-                use cryptoxide::{blake2b::Blake2b, digest::Digest};
+                use blake2::{
+                    Blake2b,
+                    digest::{Digest as _, consts::U28},
+                };
 
                 let arg1 = runtime.args[0].unwrap_byte_string()?;
 
@@ -1590,20 +1652,11 @@ impl<'a> Machine<'a> {
 
                 self.spend_budget(budget)?;
 
-                let mut digest = BumpVec::with_capacity_in(28, self.arena.as_bump());
+                let mut hasher = Blake2b::<U28>::new();
+                hasher.update(arg1);
+                let digest = self.arena.alloc(hasher.finalize());
 
-                unsafe {
-                    digest.set_len(28);
-                }
-
-                let mut context = Blake2b::new(28);
-
-                context.input(arg1);
-                context.result(&mut digest);
-
-                let digest = self.arena.alloc(digest);
-
-                let value = Value::byte_string(self.arena, digest);
+                let value = Value::byte_string(self.arena, digest.as_slice());
 
                 Ok(value)
             }
@@ -1616,7 +1669,7 @@ impl<'a> Machine<'a> {
                     return Err(MachineError::integer_to_byte_string_negative_size(size));
                 }
 
-                if *size > INTEGER_TO_BYTE_STRING_MAXIMUM_OUTPUT_LENGTH.into() {
+                if *size > Integer::from(INTEGER_TO_BYTE_STRING_MAXIMUM_OUTPUT_LENGTH) {
                     return Err(MachineError::integer_to_byte_string_size_too_big(
                         size,
                         INTEGER_TO_BYTE_STRING_MAXIMUM_OUTPUT_LENGTH,
@@ -1641,9 +1694,8 @@ impl<'a> Machine<'a> {
                 //
                 // >= 0 && < INTEGER_TO_BYTE_STRING_MAXIMUM_OUTPUT_LENGTH
 
-                if size.is_zero() && integer_log2(input.magnitude()) >= 8 * INTEGER_TO_BYTE_STRING_MAXIMUM_OUTPUT_LENGTH
-                {
-                    let required = integer_log2(input.magnitude()) / 8 + 1;
+                if size.is_zero() && integer_log2(input) >= 8 * INTEGER_TO_BYTE_STRING_MAXIMUM_OUTPUT_LENGTH {
+                    let required = integer_log2(input) / 8 + 1;
 
                     return Err(MachineError::integer_to_byte_string_size_too_big(
                         constant::integer_from(self.arena, required as i128),
@@ -1660,11 +1712,7 @@ impl<'a> Machine<'a> {
                 if input.is_zero() {
                     let mut new_bytes = BumpVec::with_capacity_in(size_unwrapped, self.arena.as_bump());
 
-                    unsafe {
-                        new_bytes.set_len(size_unwrapped);
-                    }
-
-                    new_bytes.fill(0);
+                    new_bytes.resize(size_unwrapped, 0);
 
                     let new_bytes = self.arena.alloc(new_bytes);
 
@@ -1688,11 +1736,7 @@ impl<'a> Machine<'a> {
 
                     let mut padding = BumpVec::with_capacity_in(padding_size, self.arena.as_bump());
 
-                    unsafe {
-                        padding.set_len(padding_size);
-                    }
-
-                    padding.fill(0);
+                    padding.resize(padding_size, 0);
 
                     if endianness {
                         padding.append(&mut bytes);
@@ -1721,9 +1765,9 @@ impl<'a> Machine<'a> {
                 self.spend_budget(budget)?;
 
                 let number = self.arena.alloc_integer(if endianness {
-                    Integer::from_bytes_be(num_bigint::Sign::Plus, bytes)
+                    integer_from_bytes(bytes, true)
                 } else {
-                    Integer::from_bytes_le(num_bigint::Sign::Plus, bytes)
+                    integer_from_bytes(bytes, false)
                 });
 
                 let value = Value::integer(self.arena, number);
@@ -1847,10 +1891,10 @@ impl<'a> Machine<'a> {
                     return Err(MachineError::read_bit_out_of_bounds(bit_index, bytes.len() * 8));
                 }
 
-                let (byte_index, bit_offset) = bit_index.div_rem(&8.into());
-                let bit_offset = usize::try_from(bit_offset).unwrap();
+                let (byte_index, bit_offset) = bit_index.div_rem(&Integer::from(8u8));
+                let bit_offset = integer_to_usize(&bit_offset).unwrap();
 
-                let flipped_index = bytes.len() - 1 - usize::try_from(byte_index).unwrap();
+                let flipped_index = bytes.len() - 1 - integer_to_usize(&byte_index).unwrap();
                 let byte = bytes[flipped_index];
 
                 let bit_test = (byte >> bit_offset) & 1 == 1;
@@ -1864,10 +1908,19 @@ impl<'a> Machine<'a> {
 
                 let budget = self.costs.builtin_costs.get_cost(
                     DefaultFunction::WriteBits,
-                    &[(&original_bytes).into(), (&indices).into(), (&FixedSize(1)).into()],
+                    &[(&original_bytes).into(), (&ListLength(indices)).into(), (&FixedSize(1)).into()],
                 );
 
                 self.spend_budget(budget)?;
+
+                if self.costs.semantics.bounds_write_bits_input_length()
+                    && original_bytes.len() > WRITE_BITS_MAXIMUM_INPUT_LENGTH
+                {
+                    return Err(MachineError::write_bits_input_too_long(
+                        original_bytes.len(),
+                        WRITE_BITS_MAXIMUM_INPUT_LENGTH,
+                    ));
+                }
 
                 let mut bytes = original_bytes.to_vec();
 
@@ -1878,9 +1931,9 @@ impl<'a> Machine<'a> {
                         return Err(MachineError::write_bits_out_of_bounds(bit_index, bytes.len() * 8));
                     }
 
-                    let (byte_index, bit_offset) = bit_index.div_rem(&8.into());
-                    let bit_offset = usize::try_from(bit_offset).unwrap();
-                    let flipped_index = bytes.len() - 1 - usize::try_from(byte_index).unwrap();
+                    let (byte_index, bit_offset) = bit_index.div_rem(&Integer::from(8u8));
+                    let bit_offset = integer_to_usize(&bit_offset).unwrap();
+                    let flipped_index = bytes.len() - 1 - integer_to_usize(&byte_index).unwrap();
                     let bit_mask: u8 = 1 << bit_offset;
 
                     if set_bit {
@@ -1901,7 +1954,7 @@ impl<'a> Machine<'a> {
                     return Err(MachineError::replicate_byte_negative_size(size));
                 }
 
-                if *size > INTEGER_TO_BYTE_STRING_MAXIMUM_OUTPUT_LENGTH.into() {
+                if *size > Integer::from(INTEGER_TO_BYTE_STRING_MAXIMUM_OUTPUT_LENGTH) {
                     return Err(MachineError::replicate_byte_size_too_big(
                         size,
                         INTEGER_TO_BYTE_STRING_MAXIMUM_OUTPUT_LENGTH,
@@ -1919,9 +1972,8 @@ impl<'a> Machine<'a> {
 
                 self.spend_budget(budget)?;
 
-                if size.is_zero() && integer_log2(byte.magnitude()) >= 8 * INTEGER_TO_BYTE_STRING_MAXIMUM_OUTPUT_LENGTH
-                {
-                    let required = integer_log2(byte.magnitude()) / 8 + 1;
+                if size.is_zero() && integer_log2(byte) >= 8 * INTEGER_TO_BYTE_STRING_MAXIMUM_OUTPUT_LENGTH {
+                    let required = integer_log2(byte) / 8 + 1;
 
                     return Err(MachineError::replicate_byte_size_too_big(
                         constant::integer_from(self.arena, required as i128),
@@ -1947,8 +1999,7 @@ impl<'a> Machine<'a> {
                 let bytes = runtime.args[0].unwrap_byte_string()?;
                 let shift = runtime.args[1].unwrap_integer()?;
 
-                let arg1: i64 =
-                    i64::try_from(shift).map_err(|_| MachineError::outside_usize_bounds(shift))?.saturating_abs();
+                let arg1 = self.shift_amount_cost(shift)?;
 
                 let budget = self
                     .costs
@@ -1959,18 +2010,24 @@ impl<'a> Machine<'a> {
                 let length = bytes.len();
                 let result = self.arena.alloc(vec![0; length]);
 
-                if Integer::from(length) * 8 <= shift.abs() {
+                let shift_abs = shift.clone().unsigned_abs();
+
+                if Natural::from(length) * Natural::from(8u8) <= shift_abs {
                     return Ok(Value::byte_string(self.arena, result));
                 }
 
                 let is_shift_left = shift >= &Integer::ZERO;
-                let byte_shift = usize::try_from(shift.abs() / 8).unwrap();
-                let bit_shift = usize::try_from(shift.abs() % 8).unwrap();
+                let byte_shift = natural_to_u64(&(&shift_abs / &Natural::from(8u8)))
+                    .and_then(|value| usize::try_from(value).ok())
+                    .unwrap();
+                let bit_shift = natural_to_u64(&(shift_abs % Natural::from(8u8)))
+                    .and_then(|value| usize::try_from(value).ok())
+                    .unwrap();
 
                 if is_shift_left {
                     if bit_shift == 0 {
                         // If we can shift entire bytes, that's much simpler
-                        let copy_len = length - bit_shift;
+                        let copy_len = length - byte_shift;
                         // For example, consider the following byte array [1,0,1,0,1] being shifted 8 bits (1 byte)
                         // Result: [0,1,0,1,0]
                         result[..copy_len].copy_from_slice(&bytes[byte_shift..]);
@@ -2032,8 +2089,7 @@ impl<'a> Machine<'a> {
                 let bytes = runtime.args[0].unwrap_byte_string()?;
                 let shift = runtime.args[1].unwrap_integer()?;
 
-                let arg1: i64 =
-                    i64::try_from(shift).map_err(|_| MachineError::outside_usize_bounds(shift))?.saturating_abs();
+                let arg1 = self.shift_amount_cost(shift)?;
 
                 let budget = self
                     .costs
@@ -2048,12 +2104,12 @@ impl<'a> Machine<'a> {
                     return Ok(Value::byte_string(self.arena, result));
                 }
 
-                let shift = shift.mod_floor(&(length * 8).into());
-                if shift == Integer::ZERO {
+                let shift = shift.rem_euclid(&Integer::from(length * 8));
+                if shift == Natural::ZERO {
                     return Ok(Value::byte_string(self.arena, result));
                 }
-                let byte_shift = usize::try_from(&shift / 8).unwrap();
-                let bit_shift = usize::try_from(shift % 8).unwrap();
+                let byte_shift = usize::try_from(&(&shift / &Natural::from(8u8))).unwrap();
+                let bit_shift = usize::try_from(&(shift % Natural::from(8u8))).unwrap();
 
                 if bit_shift == 0 {
                     // left rotation is the same as shift left
@@ -2127,55 +2183,61 @@ impl<'a> Machine<'a> {
                 Ok(Value::integer(self.arena, result))
             }
             DefaultFunction::Ripemd_160 => {
-                use cryptoxide::{digest::Digest, ripemd160::Ripemd160};
+                use ripemd::{Digest as _, Ripemd160};
                 let input = runtime.args[0].unwrap_byte_string()?;
                 let budget = self.costs.builtin_costs.get_cost(DefaultFunction::Ripemd_160, &[(&input).into()]);
                 self.spend_budget(budget)?;
 
                 let mut hasher = Ripemd160::new();
-                hasher.input(input);
-                let result = self.arena.alloc(vec![0; hasher.output_bytes()]);
-                hasher.result(result);
+                hasher.update(input);
+                let result = self.arena.alloc(hasher.finalize());
 
-                Ok(Value::byte_string(self.arena, result))
+                Ok(Value::byte_string(self.arena, result.as_slice()))
             }
             DefaultFunction::ExpModInteger => {
                 let base = runtime.args[0].unwrap_integer()?;
                 let exponent = runtime.args[1].unwrap_integer()?;
-                let modulus = runtime.args[2].unwrap_integer()?;
+                let modulus_integer = runtime.args[2].unwrap_integer()?;
 
                 let budget = self
                     .costs
                     .builtin_costs
-                    .get_cost(DefaultFunction::ExpModInteger, &[base.into(), exponent.into(), modulus.into()]);
+                    .get_cost(DefaultFunction::ExpModInteger, &[base.into(), exponent.into(), modulus_integer.into()]);
                 self.spend_budget(budget)?;
 
-                if modulus <= &Integer::ZERO {
-                    return Err(MachineError::division_by_zero(base, modulus));
+                if modulus_integer <= &Integer::ZERO {
+                    return Err(MachineError::division_by_zero(base, modulus_integer));
                 }
 
-                let result = if exponent.is_negative() {
-                    match base.modinv(modulus) {
-                        Some(inv) => inv.modpow(&exponent.abs(), modulus),
-                        None => return Err(MachineError::ExplicitErrorTerm),
+                let is_negative_exponent = exponent.is_negative();
+                let modulus = modulus_integer.clone().unsigned_abs();
+                let base_integer = base;
+                let base = base_integer.rem_euclid(modulus_integer);
+                let exponent = exponent.clone().unsigned_abs();
+                let result = if is_negative_exponent {
+                    let (gcd, inverse, _) = base_integer.gcd_ext(modulus_integer);
+                    if gcd != Natural::from(1u8) {
+                        return Err(MachineError::ExplicitErrorTerm);
                     }
+
+                    modular_pow(inverse.rem_euclid(modulus_integer), exponent, &modulus)
                 } else {
-                    base.modpow(exponent, modulus)
+                    modular_pow(base, exponent, &modulus)
                 };
 
-                let value = Value::integer(self.arena, self.arena.alloc_integer(result));
+                let value = Value::integer(self.arena, self.arena.alloc_integer(Integer::from(result)));
                 Ok(value)
             }
             DefaultFunction::DropList => {
                 let elements_to_drop = runtime.args[0].unwrap_integer()?;
                 let (list_type, list) = runtime.args[1].unwrap_list()?;
 
-                let arg0: i64 = u64::try_from(elements_to_drop.abs()).unwrap().try_into().unwrap_or(i64::MAX);
+                let arg0: i64 = i64::try_from(elements_to_drop.clone().unsigned_abs()).unwrap_or(i64::MAX);
 
                 let budget = self
                     .costs
                     .builtin_costs
-                    .get_cost(DefaultFunction::DropList, &[(&FixedSize(arg0)).into(), (&list).into()]);
+                    .get_cost(DefaultFunction::DropList, &[(&FixedSize(arg0)).into(), (&ListLength(list)).into()]);
 
                 self.spend_budget(budget)?;
 
@@ -2185,7 +2247,7 @@ impl<'a> Machine<'a> {
                     return Ok(value);
                 }
 
-                let elements_to_drop_usize = if *elements_to_drop > (usize::MAX as i128).into() {
+                let elements_to_drop_usize = if *elements_to_drop > Integer::from(usize::MAX) {
                     list.len()
                 } else {
                     usize::try_from(elements_to_drop).unwrap_or(0)
@@ -2202,7 +2264,8 @@ impl<'a> Machine<'a> {
             DefaultFunction::LengthOfArray => {
                 let (_, array) = runtime.args[0].unwrap_array()?;
 
-                let budget = self.costs.builtin_costs.get_cost(DefaultFunction::LengthOfArray, &[(&array).into()]);
+                let budget =
+                    self.costs.builtin_costs.get_cost(DefaultFunction::LengthOfArray, &[(&ListLength(array)).into()]);
 
                 self.spend_budget(budget)?;
 
@@ -2216,7 +2279,7 @@ impl<'a> Machine<'a> {
                 let (list_type, list) = runtime.args[0].unwrap_list()?;
 
                 let budget =
-                    self.costs.builtin_costs.get_cost(DefaultFunction::ListToArray, &[(&list).into(), (&list).into()]);
+                    self.costs.builtin_costs.get_cost(DefaultFunction::ListToArray, &[(&ListLength(list)).into()]);
 
                 self.spend_budget(budget)?;
 
@@ -2230,18 +2293,18 @@ impl<'a> Machine<'a> {
                 let (_, array) = runtime.args[0].unwrap_array()?;
                 let arg1 = runtime.args[1].unwrap_integer()?;
 
-                let budget =
-                    self.costs.builtin_costs.get_cost(DefaultFunction::IndexArray, &[(&array).into(), arg1.into()]);
+                let budget = self
+                    .costs
+                    .builtin_costs
+                    .get_cost(DefaultFunction::IndexArray, &[(&ListLength(array)).into(), arg1.into()]);
                 self.spend_budget(budget)?;
 
-                let index: i128 = arg1.try_into().unwrap();
-
-                if 0 <= index && (index as usize) < array.len() {
-                    let element = array[index as usize];
-                    let value = Value::con(self.arena, element);
-                    Ok(value)
-                } else {
-                    Err(MachineError::index_array_out_of_bounds(arg1, array.len()))
+                match usize::try_from(arg1).ok().and_then(|index| array.get(index)) {
+                    Some(element) => {
+                        let value = Value::con(self.arena, element);
+                        Ok(value)
+                    }
+                    None => Err(MachineError::index_array_out_of_bounds(arg1, array.len())),
                 }
             }
             DefaultFunction::Bls12_381_G1_MultiScalarMul => {
@@ -2512,7 +2575,7 @@ impl<'a> Machine<'a> {
 }
 
 fn integer_to_bytes<'a>(arena: &'a Arena, num: &'a Integer, big_endian: bool) -> BumpVec<'a, u8> {
-    let bytes = if big_endian { num.magnitude().to_bytes_be() } else { num.magnitude().to_bytes_le() };
+    let bytes = constant::integer_to_bytes(num, big_endian);
 
     let mut result = BumpVec::with_capacity_in(bytes.len(), arena.as_bump());
     result.extend_from_slice(&bytes);

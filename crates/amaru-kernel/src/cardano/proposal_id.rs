@@ -14,12 +14,15 @@
 
 use std::fmt;
 
+#[cfg(any(test, feature = "test-utils"))]
+use proptest::prelude::{Arbitrary, BoxedStrategy, Strategy, any};
+
 use crate::{Hash, cbor, size::TRANSACTION_BODY};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, std::hash::Hash, serde::Serialize, serde::Deserialize)]
 pub struct ProposalId {
     pub transaction_id: Hash<{ TRANSACTION_BODY }>,
-    pub proposal_index: u32,
+    pub proposal_index: u16,
 }
 
 impl fmt::Display for ProposalId {
@@ -50,34 +53,28 @@ impl<C: cbor::HasProtocolVersion> cbor::Encode<C> for ProposalId {
 
 impl<'b, C: cbor::HasProtocolVersion> cbor::Decode<'b, C> for ProposalId {
     fn decode(d: &mut cbor::Decoder<'b>, ctx: &mut C) -> Result<Self, cbor::decode::Error> {
-        cbor::heterogeneous_array(d, |d, assert_len| {
-            assert_len(2)?;
+        cbor::heterogeneous_array_v12(d, ctx, 2, |d, ctx| {
             Ok(Self { transaction_id: d.decode_with(ctx)?, proposal_index: d.decode_with(ctx)? })
         })
     }
 }
 
 #[cfg(any(test, feature = "test-utils"))]
-pub use tests::*;
+impl Arbitrary for ProposalId {
+    type Parameters = ();
+    type Strategy = BoxedStrategy<Self>;
 
-#[cfg(any(test, feature = "test-utils"))]
-mod tests {
-    use proptest::{prelude::*, prop_compose};
-
-    use super::ProposalId;
-    use crate::{Hash, prop_cbor_roundtrip};
-
-    prop_cbor_roundtrip!(ProposalId, any_proposal_id());
-
-    prop_compose! {
-        pub fn any_proposal_id()(
-            transaction_id in any::<[u8; 32]>(),
-            proposal_index in any::<u32>(),
-        ) -> ProposalId {
-            ProposalId {
-                transaction_id: Hash::new(transaction_id),
-                proposal_index,
-            }
-        }
+    fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
+        (any::<Hash<TRANSACTION_BODY>>(), any::<u16>())
+            .prop_map(|(transaction_id, proposal_index)| ProposalId { transaction_id, proposal_index })
+            .boxed()
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProposalId;
+    use crate::prop_cbor_roundtrip;
+
+    prop_cbor_roundtrip!(ProposalId);
 }

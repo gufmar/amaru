@@ -25,6 +25,7 @@ use crate::{
         messages::{Cookie, Message},
     },
     mux::MuxMessage,
+    peer_tracking_effects::PeerTrack,
     protocol::{
         Initiator, Inputs, Miniprotocol, Outcome, PROTO_N2N_KEEP_ALIVE, ProtocolState, StageState, miniprotocol,
         outcome,
@@ -156,10 +157,9 @@ impl StageState<State, Initiator> for KeepAliveInitiator {
                             .await;
                         Ok((None, self))
                     }
-                    .instrument(debug_span!(
-                        protocols::keepalive::initiator::KEEPALIVE_INITIATOR_STAGE,
-                        cookie
-                    ))
+                    .instrument(
+                        debug_span!(protocols::keepalive::initiator::KEEPALIVE_INITIATOR_STAGE, cookie).into(),
+                    )
                     .await
                 } else {
                     Ok((None, self))
@@ -180,6 +180,7 @@ impl StageState<State, Initiator> for KeepAliveInitiator {
                             conn_id = self.conn_id.as_u64(),
                             round_trip_micros
                         );
+                        PeerTrack::new(eff).record_keepalive_rtt(self.peer, rtt, received_at).await;
                         if let Some(report_to) = &self.report_to {
                             eff.send(
                                 report_to,
@@ -201,10 +202,13 @@ impl StageState<State, Initiator> for KeepAliveInitiator {
                     }
                     Ok((None, self))
                 }
-                .instrument(debug_span!(
-                    protocols::keepalive::initiator::KEEPALIVE_INITIATOR_STAGE,
-                    cookie = cookie_u16
-                ))
+                .instrument(
+                    debug_span!(
+                        protocols::keepalive::initiator::KEEPALIVE_INITIATOR_STAGE,
+                        cookie = cookie_u16
+                    )
+                    .into(),
+                )
                 .await
             }
         }
@@ -263,8 +267,24 @@ pub enum InitiatorAction {
 
 #[cfg(test)]
 pub mod tests {
+    use std::sync::{Arc, OnceLock};
+
+    use amaru_kernel::{NonEmptyBytes, cbor};
+    use amaru_ouroboros::{ConnectionId, PeerTrackingResource};
+    use amaru_pure_stage::{
+        StageGraph, assert_trace_contains,
+        simulation::{Run, SimulationBuilder},
+        tm_external_effect_any,
+        trace_buffer::TraceBuffer,
+    };
+    use tokio::runtime::{Builder, Runtime};
+
+    use super::*;
     use crate::{
         keepalive::{State, initiator::InitiatorAction, messages::Message},
+        mux::{HandlerMessage, MuxMessage, Sent},
+        peer_tracking::InMemoryPeerTracking,
+        peer_tracking_effects::RecordKeepaliveRttEffect,
         protocol::Initiator,
     };
 
@@ -275,5 +295,56 @@ pub mod tests {
             Message::Done => Some(InitiatorAction::Done),
             Message::ResponseKeepAlive(_) => None,
         });
+    }
+
+    fn test_runtime() -> &'static tokio::runtime::Handle {
+        static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+        RUNTIME.get_or_init(|| Builder::new_current_thread().enable_all().build().expect("runtime")).handle()
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+    struct MuxLog {
+        cookie: Option<Cookie>,
+    }
+
+    async fn mux_step(mut log: MuxLog, msg: MuxMessage, eff: Effects<MuxMessage>) -> MuxLog {
+        if let MuxMessage::Send(_, bytes, cr) = msg {
+            let decoded: Message = cbor::decode(bytes.as_ref()).expect("cbor");
+            if let Message::KeepAlive(cookie) = decoded {
+                log.cookie = Some(cookie);
+            }
+            eff.send(&cr, Sent).await;
+        }
+        log
+    }
+
+    #[test]
+    fn a_matching_response_records_the_round_trip() {
+        let _guards = (register_deserializers(), crate::peer_tracking_effects::register_deserializers());
+        let _effect = amaru_pure_stage::register_effect_deserializer::<RecordKeepaliveRttEffect>();
+        let tracking: PeerTrackingResource = Arc::new(InMemoryPeerTracking::new());
+        let mut network = SimulationBuilder::default().with_trace_buffer(TraceBuffer::new_shared(10_000, 8_000_000));
+        network.resources().put::<PeerTrackingResource>(tracking);
+        let mux = network.stage("mux", mux_step);
+        let mux_ref = mux.sender();
+        let mux = network.wire_up(mux, MuxLog::default());
+        let peer = Peer::for_test(3001);
+        let (proto, stage) = KeepAliveInitiator::new(peer, ConnectionId::initial(), mux_ref);
+        let built = network.stage("keepalive", initiator());
+        let keepalive = network.wire_up(built, (proto, stage));
+        network
+            .preload(&keepalive, [Inputs::Network(HandlerMessage::Registered(PROTO_N2N_KEEP_ALIVE.erase()))])
+            .expect("preload");
+        let mut running = network.run(test_runtime());
+        running.run(Run::default()).assert_sleeping();
+        let started = running.now();
+        running.run(Run::until(started + Duration::from_secs(1))).assert_idle();
+        let cookie = running.get_state(&mux).and_then(|log| log.cookie).expect("keepalive sent");
+        running.enqueue_msg(
+            &keepalive,
+            [Inputs::Network(HandlerMessage::FromNetwork(NonEmptyBytes::encode(&Message::ResponseKeepAlive(cookie))))],
+        );
+        running.run(Run::default()).assert_sleeping();
+        assert_trace_contains(&running, &[tm_external_effect_any::<RecordKeepaliveRttEffect>()]);
     }
 }

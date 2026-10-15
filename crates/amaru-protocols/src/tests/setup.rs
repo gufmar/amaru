@@ -27,14 +27,14 @@ use amaru_network::connection::TokioConnections;
 use amaru_observability::tracing;
 use amaru_ouroboros_traits::{
     BaseReadChainStore, CanValidateBlocks, CanValidateTxs, ConnectionId, ConnectionProvider, ConnectionsResource,
-    DiagnosticChainStore, HasStakePools, Mempool, MockBlockValidator, MockCanValidateTxs, ResourceMempool,
-    has_stake_pools::MockHasStakePools, in_memory_chain_store::InMemoryChainStore,
+    DiagnosticChainStore, HasStakePools, Mempool, MockBlockValidator, MockCanValidateTxs, PeerTrackingResource,
+    ResourceMempool, has_stake_pools::MockHasStakePools, in_memory_chain_store::InMemoryChainStore,
 };
 use amaru_pure_stage::{BoxFuture, StageGraph, tokio::TokioBuilder};
 use socket2::{Domain, Protocol, Socket, Type};
 use tracing_subscriber::EnvFilter;
 
-use crate::store_effects::ResourceHeaderStore;
+use crate::{peer_tracking::InMemoryPeerTracking, store_effects::ResourceHeaderStore};
 
 /// Log to the console (enable logs with the RUST_LOG env var, for example RUST_LOG=info)
 pub(super) fn setup_logging() {
@@ -63,7 +63,7 @@ pub(super) fn set_resources(
     mempool: Arc<dyn Mempool<WithOriginalBytes<Transaction>>>,
     network: &mut TokioBuilder,
     connections: TokioConnections,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Arc<InMemoryPeerTracking>> {
     set_resources_with_connections(chain_store, mempool, network, Arc::new(connections))
 }
 
@@ -73,8 +73,9 @@ pub(super) fn set_resources_with_connections(
     mempool: Arc<dyn Mempool<WithOriginalBytes<Transaction>>>,
     network: &mut TokioBuilder,
     connections: ConnectionsResource,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Arc<InMemoryPeerTracking>> {
     let block_validation = Arc::new(MockBlockValidator::new(chain_store.get_best_chain_tip()));
+    let tracking = Arc::new(InMemoryPeerTracking::new());
     network.resources().put::<Arc<dyn DiagnosticChainStore>>(chain_store.clone());
     network.resources().put::<ResourceHeaderStore>(chain_store);
     network.resources().put::<ResourceBlockValidation>(block_validation.clone());
@@ -82,7 +83,8 @@ pub(super) fn set_resources_with_connections(
     network.resources().put::<ResourceTxValidation>(Arc::new(MockCanValidateTxs));
     network.resources().put::<ConnectionsResource>(connections);
     network.resources().put::<ResourceMempool<Transaction>>(mempool);
-    Ok(())
+    network.resources().put::<PeerTrackingResource>(tracking.clone());
+    Ok(tracking)
 }
 
 /// A connection provider wrapper that fails `accept()` a configured number of times after some successful calls.
@@ -144,5 +146,9 @@ impl ConnectionProvider for FailingConnectionProvider {
 
     fn close(&self, conn: ConnectionId) -> BoxFuture<'static, std::io::Result<()>> {
         self.inner.close(conn)
+    }
+
+    fn local_addr(&self, conn: ConnectionId) -> BoxFuture<'static, std::io::Result<SocketAddr>> {
+        self.inner.local_addr(conn)
     }
 }

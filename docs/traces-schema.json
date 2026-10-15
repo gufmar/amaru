@@ -29,10 +29,14 @@
       ],
       "additionalProperties": false,
       "name": "adopted",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::blockperf::block",
       "description": "The block was adopted locally. `peer` is the first peer that delivered the body, when a delivery was recorded. `slot_latency_ms` is milliseconds since the onset of this block's slot.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug",
+        "info"
+      ]
     },
     "amaru::blockperf::block::RECEIVED": {
       "type": "object",
@@ -67,10 +71,14 @@
       ],
       "additionalProperties": false,
       "name": "received",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::blockperf::block",
       "description": "A distinct peer delivered this block body. `rank` is 1 for the first delivery, then 2, 3, … in arrival order. `slot_latency_ms` is milliseconds since the onset of this block's slot. `fetch_latency_ms` is milliseconds since the request was sent to this peer.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug",
+        "info"
+      ]
     },
     "amaru::blockperf::block::REQUESTED": {
       "type": "object",
@@ -97,10 +105,14 @@
       ],
       "additionalProperties": false,
       "name": "requested",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::blockperf::block",
       "description": "Peers asked to fetch this block body. `peers` is a comma-separated list of socket addresses, sorted. `slot_latency_ms` is milliseconds since the onset of this block's slot.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug",
+        "info"
+      ]
     },
     "amaru::blockperf::header::ANNOUNCED": {
       "type": "object",
@@ -131,10 +143,14 @@
       ],
       "additionalProperties": false,
       "name": "announced",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::blockperf::header",
       "description": "One of the first three distinct peers to announce this header while it is still being collected. A header that is already stored does not start a new line, and a header that has been adopted is not announced again. `rank` is 1, 2, or 3 in arrival order. Later peers are not logged. `slot_latency_ms` is milliseconds since the onset of this block's slot.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug",
+        "info"
+      ]
     },
     "amaru::bootstrap::COMPLETE": {
       "type": "object",
@@ -160,10 +176,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "complete",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap",
       "description": "Bootstrap completed successfully",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::accounts::IMPORT": {
       "type": "object",
@@ -178,10 +197,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::accounts",
       "description": "Import accounts from a snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::accounts::IS_NOT_EMPTY": {
       "type": "object",
@@ -190,10 +212,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "is_not_empty",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::accounts",
       "description": "Existing accounts found in the store before import",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::bootstrap::block_issuers::IMPORT": {
       "type": "object",
@@ -208,10 +233,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::block_issuers",
       "description": "Import block issuers from a snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::constitution::IMPORT": {
       "type": "object",
@@ -230,10 +258,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::constitution",
       "description": "Import the constitution from a snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::constitutional_committee::IMPORT": {
       "type": "object",
@@ -257,10 +288,13 @@
       ],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::constitutional_committee",
       "description": "Import the constitutional committee from a snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::dreps::IMPORT": {
       "type": "object",
@@ -275,10 +309,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::dreps",
       "description": "Import DReps from a snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::fetch::ROLLBACK": {
       "type": "object",
@@ -324,10 +361,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "rollback",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::fetch",
       "description": "Received a rollback while fetching bootstrap headers",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::governance_activity::IMPORT": {
       "type": "object",
@@ -342,10 +382,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::governance_activity",
       "description": "Import the governance activity from a snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::header::IMPORT": {
       "type": "object",
@@ -363,10 +406,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::header",
       "description": "Import a single header into the chain store",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::headers::FETCH": {
       "type": "object",
@@ -389,10 +435,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "fetch",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::headers",
       "description": "Fetch bootstrap headers from a peer",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::headers::NEXT_FAILED": {
       "type": "object",
@@ -411,10 +460,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "next_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::headers",
       "description": "The chain-sync client failed while requesting or awaiting the next header. Operation ∈ {request_next, await_next}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::bootstrap::import::UTXO": {
       "type": "object",
@@ -429,10 +481,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "utxo",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::import",
       "description": "Import UTxO entries from a snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::nonces::IMPORT": {
       "type": "object",
@@ -474,10 +529,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::nonces",
       "description": "Import initial nonces into the chain store",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::opcert_sequence_numbers::IMPORT": {
       "type": "object",
@@ -519,10 +577,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::opcert_sequence_numbers",
       "description": "Import initial opcert sequence numbers into the chain store",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::peer::FAILED_TO_CONNECT": {
       "type": "object",
@@ -541,10 +602,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "failed_to_connect",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::peer",
       "description": "Failed to connect to a peer while bootstrapping",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::bootstrap::pots::IMPORT": {
       "type": "object",
@@ -583,10 +647,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::pots",
       "description": "Import treasury/reserves/fees pots from a snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::progress::COMPLETE": {
       "type": "object",
@@ -608,10 +675,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "complete",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::progress",
       "description": "Report successful bootstrap completion",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::progress::DOWNLOAD": {
       "type": "object",
@@ -630,10 +700,47 @@
       "optional": [],
       "additionalProperties": false,
       "name": "download",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::progress",
       "description": "Report absolute aggregate snapshot download progress",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::bootstrap::progress::PHASE_COMPLETED": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        },
+        "downloaded_bytes": {
+          "type": "integer"
+        },
+        "completed_snapshots": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "phase"
+      ],
+      "optional": [
+        "size",
+        "downloaded_bytes",
+        "completed_snapshots"
+      ],
+      "additionalProperties": false,
+      "name": "phase_completed",
+      "kind": "event",
+      "target": "amaru::bootstrap::progress",
+      "description": "A bootstrap phase completed; size counts entries and downloaded_bytes counts bytes",
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::progress::SNAPSHOTS_SELECTED": {
       "type": "object",
@@ -653,10 +760,13 @@
       ],
       "additionalProperties": false,
       "name": "snapshots_selected",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::progress",
       "description": "Report the selected snapshot window and its aggregate compressed size",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::progress::STAGE": {
       "type": "object",
@@ -671,10 +781,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "stage",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::progress",
       "description": "Enter a canonical bootstrap stage",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::proposal_roots::IMPORT": {
       "type": "object",
@@ -701,10 +814,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::proposal_roots",
       "description": "Import governance proposal roots from a snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::proposals::IMPORT": {
       "type": "object",
@@ -719,10 +835,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::proposals",
       "description": "Import governance proposals from a snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::proposals::IS_NOT_EMPTY": {
       "type": "object",
@@ -731,10 +850,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "is_not_empty",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::proposals",
       "description": "Existing proposals found in the store before import",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::bootstrap::recently_pruned_proposals::IMPORT": {
       "type": "object",
@@ -749,10 +871,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::recently_pruned_proposals",
       "description": "Import proposals pruned at the snapshot's epoch boundary, from its ratify state",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::snapshot::DOWNLOAD": {
       "type": "object",
@@ -774,10 +899,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "download",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::snapshot",
       "description": "Download a snapshot archive",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::snapshot::IMPORT_ARCHIVE": {
       "type": "object",
@@ -792,10 +920,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import_archive",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::snapshot",
       "description": "Import a compressed snapshot archive",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::snapshot::IMPORT_TVAR": {
       "type": "object",
@@ -841,10 +972,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import_tvar",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::snapshot",
       "description": "Import from the tvar data",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::snapshot::SKIP_DOWNLOAD": {
       "type": "object",
@@ -859,10 +993,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "skip_download",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::snapshot",
       "description": "Snapshot already downloaded; skipping download",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::snapshot::UNEXPECTED_ERA": {
       "type": "object",
@@ -877,10 +1014,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "unexpected_era",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::snapshot",
       "description": "The parsed snapshot's current era is not Conway; later decoding may fail",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::bootstrap::snapshots::IMPORT": {
       "type": "object",
@@ -895,10 +1035,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::snapshots",
       "description": "Import all snapshots",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::stake_pools::IMPORT": {
       "type": "object",
@@ -917,10 +1060,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::stake_pools",
       "description": "Import stake pools from a snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::bootstrap::votes::IMPORT": {
       "type": "object",
@@ -935,10 +1081,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "import",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::bootstrap::votes",
       "description": "Import governance votes from a snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::ERROR": {
       "type": "object",
@@ -958,32 +1107,13 @@
       ],
       "additionalProperties": false,
       "name": "error",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli",
       "description": "Process terminated with an error.",
-      "public": true
-    },
-    "amaru::cli::chain_db::EXIST": {
-      "type": "object",
-      "properties": {
-        "dir": {
-          "type": "string"
-        },
-        "hint": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "dir",
-        "hint"
-      ],
-      "optional": [],
-      "additionalProperties": false,
-      "name": "exist",
-      "level": "TRACE",
-      "target": "amaru::cli::chain_db",
-      "description": "Chain database already exists",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::cli::current_epoch::RESOLVE": {
       "type": "object",
@@ -998,10 +1128,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "resolve",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::current_epoch",
       "description": "Resolve the current epoch from Koios",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::db_analyser::REUSE_LEDGER_SNAPSHOT": {
       "type": "object",
@@ -1030,10 +1163,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "reuse_ledger_snapshot",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::db_analyser",
       "description": "Reuse an existing db-analyser ledger snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::db_analyser::RUN": {
       "type": "object",
@@ -1066,89 +1202,92 @@
       ],
       "additionalProperties": false,
       "name": "run",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::db_analyser",
       "description": "Run db-analyser to produce a ledger snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
-    "amaru::cli::dev::RUN": {
+    "amaru::cli::db_chain::EXIST": {
       "type": "object",
       "properties": {
-        "command": {
+        "dir": {
           "type": "string"
-        },
-        "network": {
-          "type": "string"
-        },
-        "chain_dir": {
-          "type": "string"
-        },
-        "ledger_dir": {
-          "type": "string"
-        },
-        "headers_dir": {
-          "type": "string"
-        },
-        "input": {
-          "type": "string"
-        },
-        "start": {
-          "type": "string"
-        },
-        "block": {
-          "type": "string"
-        },
-        "parent": {
-          "type": "string"
-        },
-        "peer_address": {
-          "type": "string"
-        },
-        "epoch": {
-          "type": "string"
-        },
-        "count": {
-          "type": "integer"
-        },
-        "from_point": {
-          "type": "string"
-        },
-        "only_blocks": {
-          "type": "boolean"
-        },
-        "only_validation_results": {
-          "type": "boolean"
         },
         "hint": {
           "type": "string"
         }
       },
       "required": [
-        "command",
-        "network"
-      ],
-      "optional": [
-        "chain_dir",
-        "ledger_dir",
-        "headers_dir",
-        "input",
-        "start",
-        "block",
-        "parent",
-        "peer_address",
-        "epoch",
-        "count",
-        "from_point",
-        "only_blocks",
-        "only_validation_results",
+        "dir",
         "hint"
       ],
+      "optional": [],
       "additionalProperties": false,
-      "name": "run",
-      "level": "TRACE",
-      "target": "amaru::cli::dev",
-      "description": "A developer command started, with the arguments it resolved. Command names the subcommand, e.g. \"dev chain prune\".",
-      "public": true
+      "name": "exist",
+      "kind": "event",
+      "target": "amaru::cli::db_chain",
+      "description": "Chain database already exists",
+      "public": true,
+      "levels": [
+        "warn"
+      ]
+    },
+    "amaru::cli::db_ledger::EXIST": {
+      "type": "object",
+      "properties": {
+        "dir": {
+          "type": "string"
+        },
+        "hint": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "dir",
+        "hint"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "exist",
+      "kind": "event",
+      "target": "amaru::cli::db_ledger",
+      "description": "Ledger database already exists",
+      "public": true,
+      "levels": [
+        "warn"
+      ]
+    },
+    "amaru::cli::dev::chain::ANCESTORS": {
+      "type": "object",
+      "properties": {
+        "db_chain": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "start": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "db_chain",
+        "network",
+        "start"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "ancestors",
+      "kind": "event",
+      "target": "amaru::cli::dev::chain",
+      "description": "Walk back from a given point showing block height, presence, validation status and best chain flag.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::dev::chain::ANCHOR_UPDATED": {
       "type": "object",
@@ -1166,10 +1305,179 @@
       "optional": [],
       "additionalProperties": false,
       "name": "anchor_updated",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::dev::chain",
       "description": "The chain store anchor was moved to a new hash",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::cli::dev::chain::BEST_CHAIN": {
+      "type": "object",
+      "properties": {
+        "db_chain": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "db_chain",
+        "network"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "best_chain",
+      "kind": "event",
+      "target": "amaru::cli::dev::chain",
+      "description": "Show the best chain tip and computed best tip candidate.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::cli::dev::chain::CHILDREN": {
+      "type": "object",
+      "properties": {
+        "db_chain": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "start": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "db_chain",
+        "network",
+        "start"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "children",
+      "kind": "event",
+      "target": "amaru::cli::dev::chain",
+      "description": "Walk forward from a point and show its children.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::cli::dev::chain::CLEAR_INVALID": {
+      "type": "object",
+      "properties": {
+        "blocks": {
+          "type": "string"
+        },
+        "db_chain": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "blocks",
+        "db_chain",
+        "network"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "clear_invalid",
+      "kind": "event",
+      "target": "amaru::cli::dev::chain",
+      "description": "Clear the validation status for selected blocks.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::cli::dev::chain::DUMP": {
+      "type": "object",
+      "properties": {
+        "db_chain": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "db_chain",
+        "network"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "dump",
+      "kind": "event",
+      "target": "amaru::cli::dev::chain",
+      "description": "Dump selected chain database tables.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::cli::dev::chain::FETCH": {
+      "type": "object",
+      "properties": {
+        "headers": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "parent": {
+          "type": "string"
+        },
+        "peer": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "headers",
+        "network",
+        "parent",
+        "peer"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "fetch",
+      "kind": "event",
+      "target": "amaru::cli::dev::chain",
+      "description": "Fetch chain headers from a peer.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::cli::dev::chain::MIGRATE": {
+      "type": "object",
+      "properties": {
+        "db_chain": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "db_chain",
+        "network"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "migrate",
+      "kind": "event",
+      "target": "amaru::cli::dev::chain",
+      "description": "Migrate the chain database to the current format.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::dev::chain::MIGRATION_NOT_NEEDED": {
       "type": "object",
@@ -1178,10 +1486,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "migration_not_needed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::dev::chain",
       "description": "The chain database is already at the current version",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::dev::chain::MOVING_BEST_CHAIN": {
       "type": "object",
@@ -1190,10 +1501,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "moving_best_chain",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::dev::chain",
       "description": "The best chain hash is being moved back before removing points",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::cli::dev::chain::OPEN_FAILED": {
       "type": "object",
@@ -1208,10 +1522,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "open_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::dev::chain",
       "description": "The chain database could not be opened",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::cli::dev::chain::PARENT_NOT_FOUND": {
       "type": "object",
@@ -1229,10 +1546,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "parent_not_found",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::dev::chain",
       "description": "A header on the path back to the best chain has no stored parent",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::cli::dev::chain::POINTS_TO_REMOVE": {
       "type": "object",
@@ -1247,10 +1567,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "points_to_remove",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::dev::chain",
       "description": "The number of stored points selected for removal",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::dev::chain::POINT_REMOVED": {
       "type": "object",
@@ -1292,10 +1615,42 @@
       "optional": [],
       "additionalProperties": false,
       "name": "point_removed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::dev::chain",
       "description": "A point is being removed from the chain store",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::cli::dev::chain::PRUNE": {
+      "type": "object",
+      "properties": {
+        "db_chain": {
+          "type": "string"
+        },
+        "db_ledger": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "db_chain",
+        "db_ledger",
+        "network"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "prune",
+      "kind": "event",
+      "target": "amaru::cli::dev::chain",
+      "description": "Prune chain data that precedes the oldest ledger snapshot.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::dev::chain::PRUNE_BOUNDARY": {
       "type": "object",
@@ -1314,10 +1669,50 @@
       "optional": [],
       "additionalProperties": false,
       "name": "prune_boundary",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::dev::chain",
       "description": "The pruning boundary derived from the oldest ledger snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::cli::dev::chain::REMOVE": {
+      "type": "object",
+      "properties": {
+        "db_chain": {
+          "type": "string"
+        },
+        "from_point": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "only_blocks": {
+          "type": "boolean"
+        },
+        "only_validation_results": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "db_chain",
+        "from_point",
+        "network",
+        "only_blocks",
+        "only_validation_results"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "remove",
+      "kind": "event",
+      "target": "amaru::cli::dev::chain",
+      "description": "Remove data after a chain point.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::dev::chain::VALIDATION_CLEARED": {
       "type": "object",
@@ -1335,10 +1730,74 @@
       "optional": [],
       "additionalProperties": false,
       "name": "validation_cleared",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::dev::chain",
       "description": "The stored validation status of a block is being cleared",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::cli::dev::ledger::CONVERT": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "string"
+        },
+        "db_ledger": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "input",
+        "db_ledger",
+        "network"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "convert",
+      "kind": "event",
+      "target": "amaru::cli::dev::ledger",
+      "description": "Convert a cardano-node snapshot into an Amaru ledger database.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::cli::dev::ledger::RESET": {
+      "type": "object",
+      "properties": {
+        "epoch": {
+          "title": "uint64",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "db_ledger": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "epoch",
+        "db_ledger",
+        "network"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "reset",
+      "kind": "event",
+      "target": "amaru::cli::dev::ledger",
+      "description": "Reset an Amaru ledger database to a snapshot epoch.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::dev::ledger::SNAPSHOT_NOT_FOUND": {
       "type": "object",
@@ -1353,10 +1812,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "snapshot_not_found",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::dev::ledger",
-      "description": "A ledger snapshot to remove does not exist",
-      "public": true
+      "description": "A ledger snapshot to remove does not exist.",
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::cli::dev::ledger::SNAPSHOT_REMOVED": {
       "type": "object",
@@ -1371,10 +1833,150 @@
       "optional": [],
       "additionalProperties": false,
       "name": "snapshot_removed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::dev::ledger",
-      "description": "A ledger snapshot was removed",
-      "public": true
+      "description": "A ledger snapshot was removed.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::cli::dev::ledger::nonces::GET": {
+      "type": "object",
+      "properties": {
+        "block": {
+          "type": "string"
+        },
+        "db_chain": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "block",
+        "db_chain",
+        "network"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "get",
+      "kind": "event",
+      "target": "amaru::cli::dev::ledger::nonces",
+      "description": "Look up the nonces associated with a block.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::cli::dev::ledger::nonces::SET": {
+      "type": "object",
+      "properties": {
+        "block": {
+          "type": "string"
+        },
+        "db_chain": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "block",
+        "db_chain",
+        "network"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "set",
+      "kind": "event",
+      "target": "amaru::cli::dev::ledger::nonces",
+      "description": "Set the nonces associated with a block.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::cli::dev::ledger::state::IMPORT": {
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "integer"
+        },
+        "db_ledger": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "count",
+        "db_ledger",
+        "network"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "import",
+      "kind": "event",
+      "target": "amaru::cli::dev::ledger::state",
+      "description": "Import ledger state snapshots.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::cli::dev::ledger::state::LIST": {
+      "type": "object",
+      "properties": {
+        "db_ledger": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "db_ledger",
+        "network"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "list",
+      "kind": "event",
+      "target": "amaru::cli::dev::ledger::state",
+      "description": "List ledger state snapshots.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::cli::dev::ledger::state::REMOVE": {
+      "type": "object",
+      "properties": {
+        "db_ledger": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "db_ledger",
+        "network"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "remove",
+      "kind": "event",
+      "target": "amaru::cli::dev::ledger::state",
+      "description": "Removing ledger state",
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::last_block::RESOLVE": {
       "type": "object",
@@ -1396,32 +1998,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "resolve",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::last_block",
       "description": "Resolve the last produced block for an epoch",
-      "public": true
-    },
-    "amaru::cli::ledger_db::EXIST": {
-      "type": "object",
-      "properties": {
-        "dir": {
-          "type": "string"
-        },
-        "hint": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "dir",
-        "hint"
-      ],
-      "optional": [],
-      "additionalProperties": false,
-      "name": "exist",
-      "level": "TRACE",
-      "target": "amaru::cli::ledger_db",
-      "description": "Ledger database already exists",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::mithril::DOWNLOAD": {
       "type": "object",
@@ -1440,10 +2023,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "download",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::mithril",
       "description": "Synchronize the cardano-node database from Mithril",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::mithril::INGEST_COMPLETED": {
       "type": "object",
@@ -1466,10 +2052,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "ingest_completed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::mithril",
       "description": "Finished replaying downloaded blocks into the stores",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::mithril::RECOVER_CHAIN_TIP": {
       "type": "object",
@@ -1542,10 +2131,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "recover_chain_tip",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::mithril",
       "description": "Complete chain-store adoption after an interrupted Mithril ledger update",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::mithril::SKIP_DOWNLOAD": {
       "type": "object",
@@ -1572,18 +2164,21 @@
       "optional": [],
       "additionalProperties": false,
       "name": "skip_download",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::mithril",
       "description": "Local cardano-node database is recent enough; skipping Mithril download",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::node::BOOTSTRAP": {
       "type": "object",
       "properties": {
-        "chain_dir": {
+        "db_chain": {
           "type": "string"
         },
-        "ledger_dir": {
+        "db_ledger": {
           "type": "string"
         },
         "network": {
@@ -1597,8 +2192,8 @@
         }
       },
       "required": [
-        "chain_dir",
-        "ledger_dir",
+        "db_chain",
+        "db_ledger",
         "network"
       ],
       "optional": [
@@ -1606,18 +2201,21 @@
       ],
       "additionalProperties": false,
       "name": "bootstrap",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::node",
       "description": "Bootstrap a node from published snapshots",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::node::RM": {
       "type": "object",
       "properties": {
-        "chain_dir": {
+        "db_chain": {
           "type": "string"
         },
-        "ledger_dir": {
+        "db_ledger": {
           "type": "string"
         },
         "network": {
@@ -1625,31 +2223,40 @@
         }
       },
       "required": [
-        "chain_dir",
-        "ledger_dir",
+        "db_chain",
+        "db_ledger",
         "network"
       ],
       "optional": [],
       "additionalProperties": false,
       "name": "rm",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::node",
       "description": "Remove ledger and chain database from disk",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::node::ROLLBACK": {
       "type": "object",
       "properties": {
-        "chain_dir": {
+        "db_chain": {
           "type": "string"
         },
-        "ledger_dir": {
+        "db_ledger": {
+          "type": "string"
+        },
+        "mode": {
           "type": "string"
         },
         "network": {
           "type": "string"
         },
-        "mode": {
+        "anchor": {
+          "type": "string"
+        },
+        "best_chain": {
           "type": "string"
         },
         "epoch": {
@@ -1657,86 +2264,92 @@
         },
         "ledger_tip": {
           "type": "string"
-        },
-        "best_chain": {
-          "type": "string"
-        },
-        "anchor": {
-          "type": "string"
         }
       },
       "required": [
-        "chain_dir",
-        "ledger_dir",
-        "network",
-        "mode"
+        "db_chain",
+        "db_ledger",
+        "mode",
+        "network"
       ],
       "optional": [
-        "epoch",
-        "ledger_tip",
+        "anchor",
         "best_chain",
-        "anchor"
+        "epoch",
+        "ledger_tip"
       ],
       "additionalProperties": false,
       "name": "rollback",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::node",
       "description": "Roll the node databases back after a failure",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::node::RUN": {
       "type": "object",
       "properties": {
-        "chain_dir": {
+        "db_chain": {
           "type": "string"
         },
-        "ledger_dir": {
-          "type": "string"
-        },
-        "listen_address": {
-          "type": "string"
-        },
-        "max_extra_ledger_snapshots": {
-          "type": "string"
-        },
-        "migrate_chain_db": {
+        "db_chain_automatic_migration": {
           "type": "boolean"
         },
-        "network": {
+        "db_ledger": {
           "type": "string"
         },
-        "peer_address": {
+        "db_ledger_max_extra_snapshots": {
           "type": "string"
-        },
-        "peer_snapshot": {
-          "type": "string"
-        },
-        "peer_snapshot_relays": {
-          "type": "integer"
-        },
-        "pid_file": {
-          "type": "string"
-        },
-        "submit_api_address": {
-          "type": "string"
-        },
-        "trace_buffer_min_entries": {
-          "type": "integer"
-        },
-        "trace_buffer_max_size": {
-          "type": "integer"
-        },
-        "trace_dump_path": {
-          "type": "string"
-        },
-        "peer_removal_cooldown_secs": {
-          "type": "integer"
         },
         "mempool_max_bytes": {
           "type": "string"
         },
-        "tx_submission_max_window": {
+        "network": {
+          "type": "string"
+        },
+        "peer": {
+          "type": "string"
+        },
+        "peers_listen_on": {
+          "type": "string"
+        },
+        "peers_max_downstream": {
           "type": "integer"
+        },
+        "peers_max_upstream": {
+          "type": "integer"
+        },
+        "peers_mix": {
+          "type": "string"
+        },
+        "peers_removal_cooldown_ms": {
+          "type": "integer"
+        },
+        "peers_snapshot": {
+          "type": "string"
+        },
+        "peers_snapshot_relays": {
+          "type": "integer"
+        },
+        "pid_export": {
+          "type": "string"
+        },
+        "submit_api_listen_on": {
+          "type": "string"
+        },
+        "trace_buffer": {
+          "type": "string"
+        },
+        "trace_buffer_dump": {
+          "type": "string"
+        },
+        "tui_log_retention": {
+          "type": "string"
+        },
+        "tui_off": {
+          "type": "boolean"
         },
         "tx_submission_fetch_batch_bytes": {
           "type": "integer"
@@ -1747,6 +2360,9 @@
         "tx_submission_insert_timeout_ms": {
           "type": "integer"
         },
+        "tx_submission_max_window": {
+          "type": "integer"
+        },
         "era_history": {
           "type": "string"
         },
@@ -1755,26 +2371,30 @@
         }
       },
       "required": [
-        "chain_dir",
-        "ledger_dir",
-        "listen_address",
-        "max_extra_ledger_snapshots",
-        "migrate_chain_db",
-        "network",
-        "peer_address",
-        "peer_snapshot",
-        "peer_snapshot_relays",
-        "pid_file",
-        "submit_api_address",
-        "trace_buffer_min_entries",
-        "trace_buffer_max_size",
-        "trace_dump_path",
-        "peer_removal_cooldown_secs",
+        "db_chain",
+        "db_chain_automatic_migration",
+        "db_ledger",
+        "db_ledger_max_extra_snapshots",
         "mempool_max_bytes",
-        "tx_submission_max_window",
+        "network",
+        "peer",
+        "peers_listen_on",
+        "peers_max_downstream",
+        "peers_max_upstream",
+        "peers_mix",
+        "peers_removal_cooldown_ms",
+        "peers_snapshot",
+        "peers_snapshot_relays",
+        "pid_export",
+        "submit_api_listen_on",
+        "trace_buffer",
+        "trace_buffer_dump",
+        "tui_log_retention",
+        "tui_off",
         "tx_submission_fetch_batch_bytes",
         "tx_submission_inflight_timeout_ms",
-        "tx_submission_insert_timeout_ms"
+        "tx_submission_insert_timeout_ms",
+        "tx_submission_max_window"
       ],
       "optional": [
         "era_history",
@@ -1782,7 +2402,7 @@
       ],
       "additionalProperties": false,
       "name": "run",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::cli::node",
       "description": "The effective configuration a node run starts with",
       "public": true
@@ -1805,27 +2425,30 @@
       ],
       "additionalProperties": false,
       "name": "submit_api_shutdown_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::node",
       "description": "The submit API did not stop cleanly during shutdown. Reason ∈ {join_error, timeout}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::cli::snapshot::CREATE": {
       "type": "object",
       "properties": {
-        "network": {
-          "type": "string"
-        },
-        "snapshot_output_dir": {
-          "type": "string"
-        },
-        "config_dir": {
-          "type": "string"
-        },
         "cardano_node_db": {
           "type": "string"
         },
-        "dist_dir": {
+        "config": {
+          "type": "string"
+        },
+        "dist": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "to": {
           "type": "string"
         },
         "epoch": {
@@ -1839,11 +2462,11 @@
         }
       },
       "required": [
-        "network",
-        "snapshot_output_dir",
-        "config_dir",
         "cardano_node_db",
-        "dist_dir"
+        "config",
+        "dist",
+        "network",
+        "to"
       ],
       "optional": [
         "epoch",
@@ -1851,10 +2474,13 @@
       ],
       "additionalProperties": false,
       "name": "create",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::snapshot",
       "description": "Create snapshots for the given network",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::snapshot::CREATED": {
       "type": "object",
@@ -1883,10 +2509,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "created",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::snapshot",
       "description": "Finished creating a snapshot archive",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::snapshot::PACKAGE": {
       "type": "object",
@@ -1915,10 +2544,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "package",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::snapshot",
       "description": "Package a snapshot archive",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::snapshot::PUBLISH": {
       "type": "object",
@@ -1941,10 +2573,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "publish",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::snapshot",
       "description": "Publish snapshot archives",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::snapshot::SKIP_PACKAGE": {
       "type": "object",
@@ -1977,10 +2612,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "skip_package",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::snapshot",
       "description": "Snapshot archive already packaged; skipping",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::snapshot::SKIP_UPLOAD": {
       "type": "object",
@@ -1995,10 +2633,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "skip_upload",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::snapshot",
       "description": "Snapshot archive already uploaded; skipping",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::snapshot::UPDATE_INDEX": {
       "type": "object",
@@ -2017,10 +2658,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "update_index",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::snapshot",
       "description": "Update the published snapshot index",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::snapshot::UPLOAD": {
       "type": "object",
@@ -2035,10 +2679,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "upload",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::snapshot",
       "description": "Upload a snapshot archive",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::cli::snapshot::UPLOADED": {
       "type": "object",
@@ -2053,10 +2700,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "uploaded",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::cli::snapshot",
       "description": "Finished uploading a snapshot archive",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::consensus::block::ADOPT_FAILED": {
       "type": "object",
@@ -2106,10 +2756,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "adopt_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::block",
       "description": "Adopting a tip as the new best chain failed. Step ∈ {adopt_tip, adopt_first_tip, drag_anchor_forward}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::consensus::block::APPLY_FAILED": {
       "type": "object",
@@ -2159,10 +2812,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "apply_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::block",
       "description": "A block could not be applied to the ledger. Step ∈ {validate_block, switch_to_fork}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::consensus::block::HEADER_NOT_FOUND": {
       "type": "object",
@@ -2209,10 +2865,13 @@
       ],
       "additionalProperties": false,
       "name": "header_not_found",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::block",
       "description": "A header needed to adopt a tip could not be loaded. Role ∈ {incoming_tip, current_best}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::consensus::block::INVALID": {
       "type": "object",
@@ -2293,10 +2952,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "invalid",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::block",
       "description": "A block was rejected during validation",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::consensus::block::INVARIANT_VIOLATED": {
       "type": "object",
@@ -2342,10 +3004,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "invariant_violated",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::block",
       "description": "The chain store contradicts itself while adopting a tip. Invariant ∈ {header_missing, no_common_ancestor}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::consensus::block::MISMATCHED_HASH": {
       "type": "object",
@@ -2382,10 +3047,13 @@
       ],
       "additionalProperties": false,
       "name": "mismatched_hash",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::block",
       "description": "Mismatched body hash after download, the peer is adversarial",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::consensus::block::SKIP": {
       "type": "object",
@@ -2458,10 +3126,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "skip",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::block",
       "description": "Skip a block validation when it is not better than the current ledger tip",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::consensus::block::SWITCH_FORK": {
       "type": "object",
@@ -2534,10 +3205,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "switch_fork",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::block",
       "description": "The ledger is switching to a different fork",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::consensus::block::VALIDATE_FROM_GENESIS": {
       "type": "object",
@@ -2641,10 +3315,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "validate_from_genesis",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::block",
       "description": "Block validation cannot proceed because the parent is the genesis block",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::consensus::block_source::KNOWN_INVALID": {
       "type": "object",
@@ -2690,10 +3367,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "known_invalid",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::block_source",
       "description": "A peer announced a block already known to be invalid",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::consensus::blocks::DECODE_FAILED": {
       "type": "object",
@@ -2712,10 +3392,14 @@
       "optional": [],
       "additionalProperties": false,
       "name": "decode_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::blocks",
       "description": "Failed to decode a block received from a peer",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn",
+        "error"
+      ]
     },
     "amaru::consensus::blocks::FIND_MISSING_FAILED": {
       "type": "object",
@@ -2730,10 +3414,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "find_missing_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::blocks",
       "description": "Failed to compute the set of missing blocks",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::consensus::blocks::HEADER_NOT_FOUND": {
       "type": "object",
@@ -2751,10 +3438,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "header_not_found",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::blocks",
       "description": "A header required for block fetching could not be loaded from the store",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::consensus::blocks::NOTHING_TO_FETCH": {
       "type": "object",
@@ -2827,10 +3517,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "nothing_to_fetch",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::blocks",
       "description": "The batch of missing blocks is empty; resume fetching from the tip",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::consensus::blocks::PAUSED": {
       "type": "object",
@@ -2845,10 +3538,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "paused",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::blocks",
       "description": "Block fetching paused because no upstream peers are available",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::consensus::blocks::POINT_MISMATCH": {
       "type": "object",
@@ -2922,10 +3618,13 @@
       ],
       "additionalProperties": false,
       "name": "point_mismatch",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::blocks",
       "description": "Received a block out of order: its point is not the next missing point",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::consensus::blocks::RECOVER_FAILED": {
       "type": "object",
@@ -2947,10 +3646,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "recover_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::blocks",
       "description": "Failed to check whether a stored block exists during startup recovery",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::consensus::blocks::RECOVER_INCONSISTENT": {
       "type": "object",
@@ -3003,10 +3705,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "recover_inconsistent",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::blocks",
       "description": "Startup recovery found an inconsistent stored chain. Reason ∈ {ledger_tip_is_origin, broken_chain}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::consensus::blocks::STORE_FAILED": {
       "type": "object",
@@ -3021,10 +3726,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "store_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::blocks",
       "description": "Failed to persist a downloaded block",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::consensus::blocks::TIMEOUT": {
       "type": "object",
@@ -3039,10 +3747,14 @@
       "optional": [],
       "additionalProperties": false,
       "name": "timeout",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::blocks",
       "description": "Timed out waiting for requested blocks",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug",
+        "warn"
+      ]
     },
     "amaru::consensus::chain::BEST_TIP_CANDIDATE": {
       "type": "object",
@@ -3120,10 +3832,13 @@
       ],
       "additionalProperties": false,
       "name": "best_tip_candidate",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chain",
       "description": "A new candidate was chosen as the best tip. Reason ∈ {better_chain, previous_invalidated}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::consensus::chain::BEST_TIP_INVALIDATED": {
       "type": "object",
@@ -3138,10 +3853,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "best_tip_invalidated",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chain",
       "description": "The best tip candidate was invalidated and forks depending on it were dropped",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::consensus::chain::FALLBACK_TO_ORIGIN": {
       "type": "object",
@@ -3150,10 +3868,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "fallback_to_origin",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chain",
       "description": "No valid candidate remains; the best chain falls back to origin",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::consensus::chain::FETCH_NEXT": {
       "type": "object",
@@ -3202,7 +3923,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "fetch_next",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::consensus::chain",
       "description": "Some blocks have been fetched for the current chain, decide what to do next",
       "public": true
@@ -3220,10 +3941,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "find_best_candidate_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chain",
       "description": "Failed to select a new best candidate after an invalidation",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::consensus::chain::FIND_INTERSECTION": {
       "type": "object",
@@ -3245,7 +3969,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "find_intersection",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::consensus::chain",
       "description": "Find chain intersection point with peer",
       "public": true
@@ -3263,10 +3987,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "forks_removed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chain",
       "description": "Chain forks were removed because they depend on an invalid block",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::consensus::chain::HEADER_NOT_FOUND": {
       "type": "object",
@@ -3320,10 +4047,14 @@
       ],
       "additionalProperties": false,
       "name": "header_not_found",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chain",
       "description": "A header needed for chain selection could not be loaded from the store. Role ∈ {tip, best_candidate, best_candidate_parent, parent, validation_target}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn",
+        "error"
+      ]
     },
     "amaru::consensus::chain::RESUME_FETCH": {
       "type": "object",
@@ -3432,10 +4163,13 @@
       ],
       "additionalProperties": false,
       "name": "resume_fetch",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chain",
       "description": "Where block fetching resumes from, once per request. Outcome ∈ {resume_from_best_tip, already_at_best_tip, no_best_tip}; only `resume_from_best_tip` sends a tip downstream and carries its `parent`.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::consensus::chain::SELECT_FROM_BLOCK_VALIDATION": {
       "type": "object",
@@ -3488,7 +4222,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "select_from_block_validation",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::consensus::chain",
       "description": "Received a block validation result",
       "public": true
@@ -3540,7 +4274,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "select_from_tip",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::consensus::chain",
       "description": "Received a new tip from an upstream peer",
       "public": true
@@ -3562,10 +4296,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "store_validation_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chain",
       "description": "Failed to persist the validation result of a block",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::consensus::chain::TIP_ACCEPTED": {
       "type": "object",
@@ -3643,10 +4380,13 @@
       ],
       "additionalProperties": false,
       "name": "tip_accepted",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chain",
       "description": "A tip announced by an upstream peer is new and starts or extends a chain. Outcome ∈ {new_tip, from_origin, extend, fork}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::consensus::chain::TIP_IGNORED": {
       "type": "object",
@@ -3724,82 +4464,14 @@
       ],
       "additionalProperties": false,
       "name": "tip_ignored",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chain",
       "description": "A tip announced by an upstream peer was not adopted. Reason ∈ {already_validated, already_invalid, already_tracked, invalid_ancestor}.",
-      "public": true
-    },
-    "amaru::consensus::chain_db_migration::EXECUTE": {
-      "type": "object",
-      "properties": {
-        "from": {
-          "type": "integer"
-        },
-        "to": {
-          "type": "integer"
-        }
-      },
-      "required": [
-        "from",
-        "to"
-      ],
-      "optional": [],
-      "additionalProperties": false,
-      "name": "execute",
-      "level": "TRACE",
-      "target": "amaru::consensus::chain_db_migration",
-      "description": "Migrate the database if necessary",
-      "public": true
-    },
-    "amaru::consensus::chain_db_migration::RESET_BEST_CHAIN": {
-      "type": "object",
-      "properties": {
-        "prev_best_chain": {
-          "title": "Hash<32>",
-          "description": "hex-encoded hash",
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
-        },
-        "new_best_chain": {
-          "title": "Hash<32>",
-          "description": "hex-encoded hash",
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
-        }
-      },
-      "required": [
-        "prev_best_chain",
-        "new_best_chain"
-      ],
-      "optional": [],
-      "additionalProperties": false,
-      "name": "reset_best_chain",
-      "level": "TRACE",
-      "target": "amaru::consensus::chain_db_migration",
-      "description": "Reset the best chain to the anchor during migration so blocks are revalidated",
-      "public": true
-    },
-    "amaru::consensus::chain_db_migration::WARN": {
-      "type": "object",
-      "properties": {
-        "to": {
-          "type": "integer"
-        },
-        "reason": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "to",
-        "reason"
-      ],
-      "optional": [],
-      "additionalProperties": false,
-      "name": "warn",
-      "level": "TRACE",
-      "target": "amaru::consensus::chain_db_migration",
-      "description": "A database migration relies on an assumption that may not hold; see the reason",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug",
+        "info"
+      ]
     },
     "amaru::consensus::chainsync::CHAIN_LAGGING": {
       "type": "object",
@@ -3832,10 +4504,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "chain_lagging",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chainsync",
       "description": "Near-now headers have been arriving for a minute and the adopted tip is not getting closer to the wall clock. Sync that is still adopting faster than 10 blocks per second does not raise this. Emitted at most once a minute.",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::consensus::chainsync::INITIALIZED": {
       "type": "object",
@@ -3854,10 +4529,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "initialized",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chainsync",
       "description": "A chainsync session with an upstream peer was initialized",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::consensus::chainsync::INTERSECT_FOUND": {
       "type": "object",
@@ -3927,21 +4605,28 @@
               "minItems": 3
             }
           ]
+        },
+        "tip_height": {
+          "type": "integer"
         }
       },
       "required": [
         "peer",
         "conn_id",
         "current",
-        "highest"
+        "highest",
+        "tip_height"
       ],
       "optional": [],
       "additionalProperties": false,
       "name": "intersect_found",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chainsync",
       "description": "An intersection with the peer's chain was found",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::consensus::chainsync::INTERSECT_NOT_FOUND": {
       "type": "object",
@@ -3987,10 +4672,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "intersect_not_found",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chainsync",
       "description": "No intersection with the peer's chain was found, so chainsync with it stops",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::consensus::chainsync::REINITIALIZED": {
       "type": "object",
@@ -4009,10 +4697,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "reinitialized",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chainsync",
       "description": "A chainsync session was re-initialized while still active; prior state is purged",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::consensus::chainsync::ROLL_BACKWARD": {
       "type": "object",
@@ -4079,20 +4770,27 @@
               "minItems": 3
             }
           ]
+        },
+        "tip_height": {
+          "type": "integer"
         }
       },
       "required": [
         "peer",
         "current",
-        "highest"
+        "highest",
+        "tip_height"
       ],
       "optional": [],
       "additionalProperties": false,
       "name": "roll_backward",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chainsync",
       "description": "A peer rolled back to an earlier point",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::consensus::chainsync::ROLL_BACKWARD_FAILED": {
       "type": "object",
@@ -4111,10 +4809,108 @@
       "optional": [],
       "additionalProperties": false,
       "name": "roll_backward_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chainsync",
       "description": "A rollback requested by a peer could not be applied; the peer is adversarial",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
+    },
+    "amaru::consensus::chainsync::ROLL_FORWARD_DONE": {
+      "type": "object",
+      "properties": {
+        "peer": {
+          "type": "string"
+        },
+        "current": {
+          "title": "Point",
+          "description": "Origin is an empty array. Specific points are [slot, header hash, block height]. The hash is a hex string in JSON; CBOR transport uses a byte string.",
+          "oneOf": [
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "array",
+              "items": [
+                {
+                  "description": "slot",
+                  "type": "integer"
+                },
+                {
+                  "description": "header hash",
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                {
+                  "description": "block height",
+                  "type": "integer"
+                }
+              ],
+              "maxItems": 3,
+              "minItems": 3
+            }
+          ]
+        },
+        "highest": {
+          "title": "Point",
+          "description": "Origin is an empty array. Specific points are [slot, header hash, block height]. The hash is a hex string in JSON; CBOR transport uses a byte string.",
+          "oneOf": [
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "array",
+              "items": [
+                {
+                  "description": "slot",
+                  "type": "integer"
+                },
+                {
+                  "description": "header hash",
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                {
+                  "description": "block height",
+                  "type": "integer"
+                }
+              ],
+              "maxItems": 3,
+              "minItems": 3
+            }
+          ]
+        },
+        "current_height": {
+          "type": "integer"
+        },
+        "tip_height": {
+          "type": "integer"
+        },
+        "outcome": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "peer",
+        "current",
+        "highest",
+        "current_height",
+        "tip_height",
+        "outcome"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "roll_forward_done",
+      "kind": "event",
+      "target": "amaru::consensus::chainsync",
+      "description": "A header announced by a peer was processed. Outcome ∈ {already_stored, stored}. `current_height` is that header. `tip_height` is the tip the peer advertises.",
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::consensus::chainsync::TERMINATED": {
       "type": "object",
@@ -4133,10 +4929,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "terminated",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chainsync",
       "description": "A chainsync session terminated and its connection state was purged",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::consensus::chainsync::UNKNOWN_INTERSECTION_POINT": {
       "type": "object",
@@ -4213,10 +5012,116 @@
       "optional": [],
       "additionalProperties": false,
       "name": "unknown_intersection_point",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::chainsync",
       "description": "The peer intersected on a point absent from our own store, so chainsync with it stops. Unlike `INTERSECT_NOT_FOUND` this points at local state, not at the peer.",
+      "public": true,
+      "levels": [
+        "warn"
+      ]
+    },
+    "amaru::consensus::db_chain_migration::EXECUTE": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "integer"
+        },
+        "to": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "execute",
+      "kind": "event",
+      "target": "amaru::consensus::db_chain_migration",
+      "description": "Migrate the database if necessary",
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::consensus::db_chain_migration::MIGRATE": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "integer"
+        },
+        "to": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "migrate",
+      "kind": "span",
+      "target": "amaru::consensus::db_chain_migration",
+      "description": "Migrate the chain database from the stored version to the current one",
       "public": true
+    },
+    "amaru::consensus::db_chain_migration::RESET_BEST_CHAIN": {
+      "type": "object",
+      "properties": {
+        "prev_best_chain": {
+          "title": "Hash<32>",
+          "description": "hex-encoded hash",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "new_best_chain": {
+          "title": "Hash<32>",
+          "description": "hex-encoded hash",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "prev_best_chain",
+        "new_best_chain"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "reset_best_chain",
+      "kind": "event",
+      "target": "amaru::consensus::db_chain_migration",
+      "description": "Reset the best chain to the anchor during migration so blocks are revalidated",
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::consensus::db_chain_migration::WARN": {
+      "type": "object",
+      "properties": {
+        "to": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "to",
+        "reason"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "warn",
+      "kind": "event",
+      "target": "amaru::consensus::db_chain_migration",
+      "description": "A database migration relies on an assumption that may not hold; see the reason",
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::consensus::forge::FORGED": {
       "type": "object",
@@ -4248,10 +5153,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "forged",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::forge",
       "description": "A block was forged and stored, and its tip sent to chain selection.",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::consensus::forge::FORGE_FAILED": {
       "type": "object",
@@ -4277,10 +5185,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "forge_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::forge",
       "description": "Forging the header or storing it failed. The node shuts down. Step ∈ {sign_header, validate_header, store_header, store_block}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::consensus::forge::KES_PERIOD": {
       "type": "object",
@@ -4295,10 +5206,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "kes_period",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::forge",
       "description": "The in-memory KES key moved to a new period.",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::consensus::forge::MISSED_SLOT": {
       "type": "object",
@@ -4320,10 +5234,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "missed_slot",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::forge",
       "description": "A led slot was not forged. Reason ∈ {ocert_not_yet_valid, ocert_expired, tip_ahead, not_led, woke_late, parent_not_stored}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::consensus::forge::SCHEDULE": {
       "type": "object",
@@ -4344,7 +5261,11 @@
           "type": "boolean"
         },
         "next_slot": {
-          "type": "string"
+          "title": "Nullable_String",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -4357,10 +5278,35 @@
       ],
       "additionalProperties": false,
       "name": "schedule",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::forge",
       "description": "Leader schedules still held, with how many led slots remain in each epoch and how many of k blocks since freeze have been adopted. `next_slot` is the UTC onset of the next armed led slot, `YYYY-MM-DDTHH:MM:SS.ffffffZ`.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug",
+        "info"
+      ]
+    },
+    "amaru::consensus::kes::LEGACY_KEY_ENVELOPE": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "legacy_key_envelope",
+      "kind": "event",
+      "target": "amaru::consensus::kes",
+      "description": "Loaded a legacy KES signing-key text envelope; new keys should use raw binary files",
+      "public": true,
+      "levels": [
+        "trace"
+      ]
     },
     "amaru::consensus::perf::fork::SWITCH": {
       "type": "object",
@@ -4387,10 +5333,13 @@
       ],
       "additionalProperties": false,
       "name": "switch",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::perf::fork",
-      "description": "Event recorded when a fork switch ends. `duration_micros` measures the time from the detection of the fork to its application (or abandonment).",
-      "public": true
+      "description": "Event recorded when a fork switch ends. `duration_micros` is the `amaru::network` span `perf.fork.switch`.",
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::consensus::perf::header::LIFECYCLE": {
       "type": "object",
@@ -4421,6 +5370,9 @@
         },
         "forward_micros": {
           "type": "integer"
+        },
+        "adopt_micros": {
+          "type": "integer"
         }
       },
       "required": [],
@@ -4432,14 +5384,19 @@
         "slot_start_to_header_micros",
         "block_fetch_wait_micros",
         "block_fetch_micros",
-        "forward_micros"
+        "forward_micros",
+        "adopt_micros"
       ],
       "additionalProperties": false,
       "name": "lifecycle",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::perf::header",
-      "description": "Event recorded once per header, when its processing reaches a terminal state. The four network-health points themselves are the `amaru::blockperf` events (`header.announced`, `block.requested`, `block.received`, `block.adopted`). This event carries the intervals between those points once the header reaches a terminal state. `outcome` describes that state (including headers rejected on reception, which carry no durations). The optional durations are: - `block_fetch_wait_micros`: reception of the header to the request of its block - `block_fetch_micros`: request of the block to its reception - `forward_micros`: reception of the header to the adoption of its block",
-      "public": true
+      "description": "Event recorded once per header, when its processing reaches a terminal state. The four network-health points themselves are the `amaru::blockperf` events (`header.announced`, `block.requested`, `block.received`, `block.adopted`). A header rejected on reception is logged at error and carries no durations. A completed header stays at debug. The optional durations are the `amaru::network` span durations, not a separate clock: - `forward_micros`: `perf.header.forward` - `block_fetch_wait_micros`: `perf.header.block_fetch_wait` - `block_fetch_micros`: `perf.blocks.fetch` - `adopt_micros`: body reception to adoption",
+      "public": true,
+      "levels": [
+        "debug",
+        "error"
+      ]
     },
     "amaru::consensus::performance::QUEUE_LAGGING": {
       "type": "object",
@@ -4454,10 +5411,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "queue_lagging",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::performance",
       "description": "The performance operation queue is growing faster than the worker drains it",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::consensus::performance::QUEUE_OVERFLOW": {
       "type": "object",
@@ -4476,10 +5436,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "queue_overflow",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::performance",
       "description": "The performance operation queue exceeded its hard limit; the node aborts",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::consensus::performance::WORKER_PANICKED": {
       "type": "object",
@@ -4494,9 +5457,69 @@
       "optional": [],
       "additionalProperties": false,
       "name": "worker_panicked",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::performance",
       "description": "The performance worker thread stopped because it panicked",
+      "public": true,
+      "levels": [
+        "error"
+      ]
+    },
+    "amaru::consensus::roll_forward::PROCESS": {
+      "type": "object",
+      "properties": {
+        "tip": {
+          "title": "Point",
+          "description": "Origin is an empty array. Specific points are [slot, header hash, block height]. The hash is a hex string in JSON; CBOR transport uses a byte string.",
+          "oneOf": [
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "array",
+              "items": [
+                {
+                  "description": "slot",
+                  "type": "integer"
+                },
+                {
+                  "description": "header hash",
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                {
+                  "description": "block height",
+                  "type": "integer"
+                }
+              ],
+              "maxItems": 3,
+              "minItems": 3
+            }
+          ]
+        },
+        "peer": {
+          "type": "string"
+        },
+        "header_hash": {
+          "title": "Hash<32>",
+          "description": "hex-encoded hash",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "tip",
+        "peer"
+      ],
+      "optional": [
+        "header_hash"
+      ],
+      "additionalProperties": false,
+      "name": "process",
+      "kind": "span",
+      "target": "amaru::consensus::roll_forward",
+      "description": "Received a new tip to roll forward. Parent of the exported `perf.header.forward` span.",
       "public": true
     },
     "amaru::consensus::tip::ADOPT": {
@@ -4534,10 +5557,14 @@
       "optional": [],
       "additionalProperties": false,
       "name": "adopt",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::tip",
       "description": "Adopt a tip as the next tip in the best chain",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug",
+        "info"
+      ]
     },
     "amaru::consensus::tip::MODE": {
       "type": "object",
@@ -4563,10 +5590,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "mode",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::consensus::tip",
       "description": "The node switched between catching up and live. `mode` and `previous` ∈ {sync, live}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::ledger::account::PAY_OR_REFUND": {
       "type": "object",
@@ -4595,10 +5625,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "pay_or_refund",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::account",
       "description": "Pay withdrawals to an account, or refund its deposit",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::ledger::block::APPLY": {
       "type": "object",
@@ -4616,7 +5649,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "apply",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::block",
       "description": "Apply a block to stable state",
       "public": true
@@ -4628,7 +5661,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "prepare",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::block",
       "description": "Prepare block for validation",
       "public": true
@@ -4662,7 +5695,7 @@
       ],
       "additionalProperties": false,
       "name": "create",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::block_validation_context",
       "description": "Create validation context for a block",
       "public": true
@@ -4684,10 +5717,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "violate",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::chain_growth",
       "description": "Fewer than k blocks were seen within the stability window",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::ledger::constitutional_committee::DUMP": {
       "type": "object",
@@ -4702,7 +5738,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "dump",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::constitutional_committee",
       "description": "Load the current constitutional committee on startup",
       "public": true
@@ -4728,10 +5764,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "ignore",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::constitutional_committee",
       "description": "The constitutional committee votes were ignored during ratification",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::ledger::constitutional_committee_member::DUMP": {
       "type": "object",
@@ -4758,10 +5797,13 @@
       ],
       "additionalProperties": false,
       "name": "dump",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::constitutional_committee_member",
       "description": "Load the current constitutional committee member on startup",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::ledger::epoch_transition::APPLY": {
       "type": "object",
@@ -4792,7 +5834,7 @@
       ],
       "additionalProperties": false,
       "name": "apply",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::epoch_transition",
       "description": "Flushing the epoch transition overlay to disk",
       "public": true
@@ -4829,7 +5871,7 @@
       ],
       "additionalProperties": false,
       "name": "compute",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::epoch_transition",
       "description": "Epoch transition processing",
       "public": true
@@ -4847,7 +5889,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "new_governance_updates",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::epoch_transition",
       "description": "Create governance updates (i.e. ratify proposals) at an epoch boundary.",
       "public": true
@@ -4859,7 +5901,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "new_pools_updates",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::epoch_transition",
       "description": "Create pools updates",
       "public": true
@@ -4887,10 +5929,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "record",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::epoch_transition",
       "description": "Record an in-flight epoch transition",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::ledger::epoch_transition::RETIRE_POOL": {
       "type": "object",
@@ -4908,10 +5953,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "retire_pool",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::epoch_transition",
       "description": "Retire a pool at an epoch boundary",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::ledger::epoch_transition::ROLLBACK": {
       "type": "object",
@@ -4936,10 +5984,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "rollback",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::epoch_transition",
       "description": "Rollback an in-flight epoch transition",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::ledger::epoch_transition::TICK_POOL": {
       "type": "object",
@@ -4990,10 +6041,13 @@
       ],
       "additionalProperties": false,
       "name": "tick_pool",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::epoch_transition",
       "description": "Update a pool's parameters at an epoch boundary; only changed parameters are recorded",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::ledger::governance::ENACTING": {
       "type": "object",
@@ -5017,7 +6071,7 @@
       ],
       "additionalProperties": false,
       "name": "enacting",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::governance",
       "description": "Computing enactment of a ratified proposal",
       "public": true
@@ -5050,7 +6104,7 @@
       ],
       "additionalProperties": false,
       "name": "new_ratification_context",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::governance",
       "description": "Create ratification context",
       "public": true
@@ -5097,7 +6151,7 @@
       ],
       "additionalProperties": false,
       "name": "ratifying",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::governance",
       "description": "Ratify a proposal while traversing the governance forest",
       "public": true
@@ -5135,7 +6189,7 @@
       ],
       "additionalProperties": false,
       "name": "ratify_proposals",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::governance",
       "description": "Ratify proposals at epoch boundary",
       "public": true
@@ -5153,10 +6207,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "update",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::governance_activity",
       "description": "Update the number of consecutive dormant epochs",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::ledger::overlay::NO_GOVERNANCE_UPDATES": {
       "type": "object",
@@ -5165,10 +6222,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "no_governance_updates",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::overlay",
       "description": "No governance updates found in the epoch transition overlay",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::ledger::overlay::NO_POOLS_UPDATES": {
       "type": "object",
@@ -5177,10 +6237,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "no_pools_updates",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::overlay",
       "description": "No pools updates found in the epoch transition overlay",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::ledger::pots::DUMP": {
       "type": "object",
@@ -5219,10 +6282,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "dump",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::pots",
       "description": "Load the current ledger pots",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::ledger::proposal::ACTIVE": {
       "type": "object",
@@ -5260,10 +6326,13 @@
       ],
       "additionalProperties": false,
       "name": "active",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::proposal",
       "description": "Observe a governance proposal that is currently active",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::ledger::proposal::DROP": {
       "type": "object",
@@ -5286,10 +6355,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "drop",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::proposal",
       "description": "Drop an expired or ratified governance proposal",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::ledger::proposal::SKIP": {
       "type": "object",
@@ -5341,10 +6413,13 @@
       ],
       "additionalProperties": false,
       "name": "skip",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::proposal",
       "description": "Skip a governance proposal during ratification",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::ledger::proposal_roots::SUMMARIZE": {
       "type": "object",
@@ -5371,10 +6446,13 @@
       ],
       "additionalProperties": false,
       "name": "summarize",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::proposal_roots",
       "description": "Summary of the governance proposal roots after ratification",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::ledger::protocol::UPGRADE": {
       "type": "object",
@@ -5393,10 +6471,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "upgrade",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::protocol",
       "description": "Upgrade to a new protocol version",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::ledger::protocol_parameters::DUMP": {
       "type": "object",
@@ -5568,10 +6649,13 @@
       ],
       "additionalProperties": false,
       "name": "dump",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::protocol_parameters",
       "description": "Dump the current protocol parameters",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::ledger::ratification::SKIP": {
       "type": "object",
@@ -5586,10 +6670,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "skip",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::ratification",
       "description": "Skip the remaining proposals for this epoch",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::ledger::ratification::SUMMARIZE": {
       "type": "object",
@@ -5625,10 +6712,13 @@
       ],
       "additionalProperties": false,
       "name": "summarize",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::ratification",
       "description": "Summary of the outcome of a ratification round",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::ledger::relays::COLLECT": {
       "type": "object",
@@ -5643,7 +6733,7 @@
       ],
       "additionalProperties": false,
       "name": "collect",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::relays",
       "description": "Fetch candidate relays from the immutable store",
       "public": true
@@ -5671,7 +6761,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "compute",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::rewards",
       "description": "Compute rewards for epoch",
       "public": true
@@ -5745,10 +6835,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "summarize",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::rewards",
       "description": "Summary of the rewards calculation for an epoch",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::ledger::rules::BLOCK": {
       "type": "object",
@@ -5757,7 +6850,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "block",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::rules",
       "description": "Block-related rules and other preflight checks",
       "public": true
@@ -5835,7 +6928,7 @@
       ],
       "additionalProperties": false,
       "name": "phase_one",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::rules",
       "description": "All phase one validations",
       "public": true
@@ -5853,7 +6946,7 @@
       ],
       "additionalProperties": false,
       "name": "phase_two",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::rules",
       "description": "Initialize script context and cost models for phase-2 validations, common to all scripts",
       "public": true
@@ -5874,7 +6967,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "compute",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::stake_distribution",
       "description": "Compute stake distribution for epoch",
       "public": true
@@ -5895,10 +6988,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "initial_begin",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::stake_distribution",
       "description": "Start computing one of the initial stake distributions loaded on startup",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::ledger::stake_distribution::INITIAL_PROGRESS": {
       "type": "object",
@@ -5920,10 +7016,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "initial_progress",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::stake_distribution",
       "description": "Report progress for one of the initial stake distributions loaded on startup",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::ledger::stake_distribution::INITIAL_READY": {
       "type": "object",
@@ -5938,10 +7037,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "initial_ready",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::stake_distribution",
       "description": "Finished computing all initial stake distributions loaded on startup",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::ledger::stake_distribution::ROTATE": {
       "type": "object",
@@ -5956,10 +7058,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "rotate",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::stake_distribution",
       "description": "Rotate stake distributions at an epoch boundary",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::ledger::stake_distribution::SNAPSHOT": {
       "type": "object",
@@ -6008,10 +7113,13 @@
       ],
       "additionalProperties": false,
       "name": "snapshot",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::stake_distribution",
       "description": "Snapshot of the stake distribution taken at an epoch boundary",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::ledger::state::PUSH": {
       "type": "object",
@@ -6020,7 +7128,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "push",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::state",
       "description": "Forward ledger state with new volatile state",
       "public": true
@@ -6032,7 +7140,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "roll_backward",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::state",
       "description": "Roll backward to a specific point",
       "public": true
@@ -6044,7 +7152,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "roll_forward",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::state",
       "description": "Roll forward with a new block",
       "public": true
@@ -6106,7 +7214,7 @@
       ],
       "additionalProperties": false,
       "name": "switch_to_fork",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::state",
       "description": "Switching to an alternative chain fork",
       "public": true
@@ -6168,10 +7276,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "update",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::tip",
       "description": "Updated view of the locally adopted chain tip and its derived ledger health.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::ledger::transaction::VALIDATE": {
       "type": "object",
@@ -6189,7 +7300,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "validate",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::transaction",
       "description": "Validate a single transaction",
       "public": true
@@ -6228,7 +7339,7 @@
       ],
       "additionalProperties": false,
       "name": "execute",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::transaction::script",
       "description": "A single script execution, with the associated redeemer qualifiers",
       "public": true
@@ -6249,7 +7360,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "create",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::transaction_validation_context",
       "description": "Create validation context for a transaction",
       "public": true
@@ -6271,7 +7382,7 @@
       ],
       "additionalProperties": false,
       "name": "hydrate",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::validation_context::accounts",
       "description": "Resolve accounts from the volatile db or the stable one",
       "public": true
@@ -6283,7 +7394,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "hydrate",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::validation_context::committee",
       "description": "Resolve committee members from the volatile db or the stable one",
       "public": true
@@ -6305,7 +7416,7 @@
       ],
       "additionalProperties": false,
       "name": "hydrate",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::validation_context::dreps",
       "description": "Resolve dreps from the volatile db or the stable one",
       "public": true
@@ -6327,7 +7438,7 @@
       ],
       "additionalProperties": false,
       "name": "hydrate",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::validation_context::inputs",
       "description": "Resolve transaction inputs from the volatile db or the stable one",
       "public": true
@@ -6349,7 +7460,7 @@
       ],
       "additionalProperties": false,
       "name": "hydrate",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::validation_context::pools",
       "description": "Resolve pools from the volatile db or the stable one",
       "public": true
@@ -6371,7 +7482,7 @@
       ],
       "additionalProperties": false,
       "name": "hydrate",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::validation_context::proposals",
       "description": "Resolve proposals from the volatile db or the stable one",
       "public": true
@@ -6383,7 +7494,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "aggregate",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::ledger::volatile",
       "description": "Recompute the volatile aggregate",
       "public": true
@@ -6401,10 +7512,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "warm_up",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::ledger::volatile",
       "description": "The volatile db is still warming up and hasn't reached a stable point yet",
-      "public": true
+      "public": true,
+      "levels": [
+        "trace"
+      ]
     },
     "amaru::mempool::state::UPDATE": {
       "type": "object",
@@ -6423,10 +7537,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "update",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mempool::state",
       "description": "Compact view of the mempool occupancy for terminal dashboards.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::mempool::transaction::ACCEPTED": {
       "type": "object",
@@ -6452,10 +7569,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "accepted",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mempool::transaction",
       "description": "Transaction validated and inserted into the mempool.",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::mempool::transaction::EVICTED": {
       "type": "object",
@@ -6508,10 +7628,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "evicted",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mempool::transaction",
       "description": "Transaction removed from the mempool. Reason ∈ {included_in_adopted_block, evicted_after_new_tip}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::mempool::transaction::RECEIVED": {
       "type": "object",
@@ -6533,10 +7656,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "received",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mempool::transaction",
       "description": "Transaction received by the mempool stage, before validation.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::mempool::transaction::REJECTED": {
       "type": "object",
@@ -6563,10 +7689,13 @@
       ],
       "additionalProperties": false,
       "name": "rejected",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mempool::transaction",
       "description": "Transaction rejected at insertion. Reason ∈ {invalid, duplicate, mempool_full}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::mithril::progress::COMPLETE": {
       "type": "object",
@@ -6612,10 +7741,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "complete",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mithril::progress",
       "description": "Mithril synchronization completed successfully",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::mithril::progress::DOWNLOAD": {
       "type": "object",
@@ -6643,10 +7775,13 @@
       ],
       "additionalProperties": false,
       "name": "download",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mithril::progress",
       "description": "Absolute Mithril database download progress",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::mithril::progress::INGEST": {
       "type": "object",
@@ -6692,10 +7827,43 @@
       "optional": [],
       "additionalProperties": false,
       "name": "ingest",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mithril::progress",
       "description": "Absolute block ingestion progress",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::mithril::progress::PHASE_COMPLETED": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string"
+        },
+        "downloaded_bytes": {
+          "type": "integer"
+        },
+        "completed_files": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "phase"
+      ],
+      "optional": [
+        "downloaded_bytes",
+        "completed_files"
+      ],
+      "additionalProperties": false,
+      "name": "phase_completed",
+      "kind": "event",
+      "target": "amaru::mithril::progress",
+      "description": "A Mithril phase completed successfully",
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::mithril::progress::SNAPSHOT": {
       "type": "object",
@@ -6714,10 +7882,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "snapshot",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mithril::progress",
       "description": "Selected the applicable Mithril snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::mithril::progress::STAGE": {
       "type": "object",
@@ -6732,10 +7903,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "stage",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mithril::progress",
       "description": "Mithril synchronization entered a new stage",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::mithril::snapshot::DOWNLOAD": {
       "type": "object",
@@ -6758,10 +7932,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "download",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mithril::snapshot",
       "description": "Download and unpack immutable files from a Mithril snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::mithril::snapshot::FETCH": {
       "type": "object",
@@ -6780,10 +7957,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "fetch",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mithril::snapshot",
       "description": "Fetch and verify a Mithril snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::mithril::snapshot::READY": {
       "type": "object",
@@ -6798,10 +7978,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "ready",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mithril::snapshot",
       "description": "Mithril cardano-node database is ready",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::mithril::snapshot::REBUILD_CACHE": {
       "type": "object",
@@ -6820,10 +8003,67 @@
       "optional": [],
       "additionalProperties": false,
       "name": "rebuild_cache",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mithril::snapshot",
       "description": "Rebuild an invalid local immutable cache before retrying once",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
+    },
+    "amaru::mithril::snapshot::REDOWNLOAD_CACHE": {
+      "type": "object",
+      "properties": {
+        "from_chunk": {
+          "type": "integer"
+        },
+        "through_chunk": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_chunk",
+        "through_chunk",
+        "reason"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "redownload_cache",
+      "kind": "event",
+      "target": "amaru::mithril::snapshot",
+      "description": "Cached immutable files did not verify, so fetch the selected range again",
+      "public": true,
+      "levels": [
+        "warn"
+      ]
+    },
+    "amaru::mithril::snapshot::REUSE_CACHE": {
+      "type": "object",
+      "properties": {
+        "from_chunk": {
+          "type": "integer"
+        },
+        "through_chunk": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from_chunk",
+        "through_chunk"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "reuse_cache",
+      "kind": "event",
+      "target": "amaru::mithril::snapshot",
+      "description": "Reuse cached immutable files after verifying them against the selected snapshot",
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::mithril::snapshot::VERIFY_DATABASE": {
       "type": "object",
@@ -6838,10 +8078,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "verify_database",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mithril::snapshot",
       "description": "Verify the local cardano-node database against a Mithril certificate",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::mithril::snapshot::VERIFY_DIGESTS": {
       "type": "object",
@@ -6856,10 +8099,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "verify_digests",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::mithril::snapshot",
       "description": "Download and verify the digests for a Mithril snapshot",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::network::connection::ACCEPT_LOOP_STOPPED": {
       "type": "object",
@@ -6874,10 +8120,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "accept_loop_stopped",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::network::connection",
       "description": "The accept loop terminated because the listener or channel closed",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::network::connection::LISTENER_RESTART": {
       "type": "object",
@@ -6892,9 +8141,96 @@
       "optional": [],
       "additionalProperties": false,
       "name": "listener_restart",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::network::connection",
       "description": "Aborted an existing listener task so the address can be rebound on restart",
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::network::perf::blocks::FETCH": {
+      "type": "object",
+      "properties": {
+        "header_hash": {
+          "title": "Hash<32>",
+          "description": "hex-encoded hash",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "header_hash"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "fetch",
+      "kind": "span",
+      "target": "amaru::network::perf::blocks",
+      "description": "One header's block body, from the request of the range that contains it until that body arrives.",
+      "public": true
+    },
+    "amaru::network::perf::fork::SWITCH": {
+      "type": "object",
+      "properties": {
+        "header_hash": {
+          "title": "Hash<32>",
+          "description": "hex-encoded hash",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "header_hash"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "switch",
+      "kind": "span",
+      "target": "amaru::network::perf::fork",
+      "description": "One switch onto a fork, from detection until the switch ends. `header_hash` is the fork tip. The span covers every block on that fork.",
+      "public": true
+    },
+    "amaru::network::perf::header::BLOCK_FETCH_WAIT": {
+      "type": "object",
+      "properties": {
+        "header_hash": {
+          "title": "Hash<32>",
+          "description": "hex-encoded hash",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "header_hash"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "block_fetch_wait",
+      "kind": "span",
+      "target": "amaru::network::perf::header",
+      "description": "Header waiting in chain selection before it can be fetched.",
+      "public": true
+    },
+    "amaru::network::perf::header::FORWARD": {
+      "type": "object",
+      "properties": {
+        "header_hash": {
+          "title": "Hash<32>",
+          "description": "hex-encoded hash",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "header_hash"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "forward",
+      "kind": "span",
+      "target": "amaru::network::perf::header",
+      "description": "Header accepted from an upstream peer, or forged locally, until chain selection finishes with it. A locally forged block has no upstream roll-forward and is a root span.",
       "public": true
     },
     "amaru::node::build::FORGING": {
@@ -6921,10 +8257,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "forging",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::node::build",
       "description": "Block forging is configured from key files.",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::node::build::LEDGER_OPENED": {
       "type": "object",
@@ -6966,10 +8305,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "ledger_opened",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::node::build",
       "description": "Opened the ledger state; reports the ledger tip at startup",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::node::build::STAKE_DIST_NOTIFY_FAILED": {
       "type": "object",
@@ -6978,10 +8320,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "stake_dist_notify_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::node::build",
       "description": "Failed to notify the peer tracker of a stake distribution update",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::node::metrics::PROCESS_NOT_FOUND": {
       "type": "object",
@@ -6996,10 +8341,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "process_not_found",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::node::metrics",
       "description": "The metrics collector could not find Amaru's own process",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::node::submit_api::MEMPOOL_UNREACHABLE": {
       "type": "object",
@@ -7014,10 +8362,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "mempool_unreachable",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::node::submit_api",
       "description": "A submitted transaction could not reach the mempool. Reason ∈ {send_failed, response_dropped, deserialize_failed}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::node::submit_api::STARTED": {
       "type": "object",
@@ -7032,10 +8383,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "started",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::node::submit_api",
       "description": "The transaction submission HTTP server is listening",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::node::submit_api::STOPPED": {
       "type": "object",
@@ -7050,10 +8404,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "stopped",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::node::submit_api",
       "description": "The transaction submission HTTP server stopped with an error",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::protocols::INVALID_INPUT": {
       "type": "object",
@@ -7080,10 +8437,42 @@
       "optional": [],
       "additionalProperties": false,
       "name": "invalid_input",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols",
       "description": "A protocol handler received invalid input",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
+    },
+    "amaru::protocols::TIMEOUT": {
+      "type": "object",
+      "properties": {
+        "proto": {
+          "type": "string"
+        },
+        "peer": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "proto",
+        "peer",
+        "state"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "timeout",
+      "kind": "event",
+      "target": "amaru::protocols",
+      "description": "A protocol handler timed out waiting for the peer and is terminating",
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::protocols::chainsync::initiator::ROLLBACK_POINT_NOT_FOUND": {
       "type": "object",
@@ -7101,10 +8490,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "rollback_point_not_found",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::chainsync::initiator",
       "description": "A rollback target announced by the peer is not in the chain store",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::protocols::chainsync::responder::STOPPED": {
       "type": "object",
@@ -7113,10 +8505,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "stopped",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::chainsync::responder",
       "description": "The peer ended the chainsync session",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::connection::ACCEPT_FAILED": {
       "type": "object",
@@ -7136,10 +8531,14 @@
       ],
       "additionalProperties": false,
       "name": "accept_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::connection",
       "description": "An inbound connection could not be accepted. Reason ∈ {aborted, error}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug",
+        "error"
+      ]
     },
     "amaru::protocols::connection::CHILD_DIED": {
       "type": "object",
@@ -7162,10 +8561,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "child_died",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::connection",
       "description": "A mini-protocol stage running on a connection died",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::connection::CHILD_STOPPED": {
       "type": "object",
@@ -7188,10 +8590,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "child_stopped",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::connection",
       "description": "A mini-protocol stage running on a connection stopped upon request",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::connection::HANDSHAKE_QUERY_REPLY": {
       "type": "object",
@@ -7206,10 +8611,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "handshake_query_reply",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::connection",
       "description": "The peer answered a version query instead of negotiating",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::connection::HANDSHAKE_REFUSED": {
       "type": "object",
@@ -7224,10 +8632,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "handshake_refused",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::connection",
       "description": "The peer refused our proposed protocol versions",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::protocols::keepalive::peer::ROUND_TRIP": {
       "type": "object",
@@ -7250,10 +8661,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "round_trip",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::keepalive::peer",
       "description": "Measured round-trip time for a keepalive exchange on an established peer connection.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::protocols::manager::blocks::FETCH_NO_PEERS": {
       "type": "object",
@@ -7268,10 +8682,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "fetch_no_peers",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::manager::blocks",
       "description": "No connection was available to serve a block-fetch request",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::protocols::manager::listen::FAILED": {
       "type": "object",
@@ -7290,10 +8707,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::manager::listen",
       "description": "The node could not listen on the configured address",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::protocols::manager::listen::STARTED": {
       "type": "object",
@@ -7308,10 +8728,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "started",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::manager::listen",
       "description": "The node is accepting inbound connections on an address",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::manager::message::PROCESS": {
       "type": "object",
@@ -7326,7 +8749,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "process",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::protocols::manager::message",
       "description": "Handle manager stage messages",
       "public": true
@@ -7348,7 +8771,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "accepted",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::protocols::manager::peer",
       "description": "An inbound connection was accepted from a peer",
       "public": true
@@ -7366,7 +8789,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "add",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::protocols::manager::peer",
       "description": "A new peer was added to the manager",
       "public": true
@@ -7388,10 +8811,14 @@
       "optional": [],
       "additionalProperties": false,
       "name": "close_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::manager::peer",
       "description": "Closing the socket of a dead connection failed",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug",
+        "error"
+      ]
     },
     "amaru::protocols::manager::peer::CONNECT": {
       "type": "object",
@@ -7406,10 +8833,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "connect",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::manager::peer",
       "description": "Initiating an outbound connection to a peer",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::manager::peer::CONNECTED": {
       "type": "object",
@@ -7428,10 +8858,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "connected",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::manager::peer",
       "description": "An outbound connection to a peer was established",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::manager::peer::CONNECTION_DIED": {
       "type": "object",
@@ -7454,7 +8887,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "connection_died",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::protocols::manager::peer",
       "description": "A peer connection has died",
       "public": true
@@ -7476,10 +8909,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "connection_died_handled",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::manager::peer",
       "description": "A dead connection was reconciled with the peer's remaining state. Outcome ∈ {peer_removed, kept_for_outbound, retries_suppressed, reconnect_scheduled}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::manager::peer::CONNECT_DISCARDED": {
       "type": "object",
@@ -7498,10 +8934,14 @@
       "optional": [],
       "additionalProperties": false,
       "name": "connect_discarded",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::manager::peer",
       "description": "A connection request for a peer was discarded. Reason ∈ {already_connected_or_scheduled, already_connected, not_added}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug",
+        "info"
+      ]
     },
     "amaru::protocols::manager::peer::CONNECT_FAILED": {
       "type": "object",
@@ -7520,10 +8960,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "connect_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::manager::peer",
       "description": "An outbound connection attempt failed",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::manager::peer::DISCONNECTING": {
       "type": "object",
@@ -7546,10 +8989,14 @@
       "optional": [],
       "additionalProperties": false,
       "name": "disconnecting",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::manager::peer",
       "description": "A connection is being closed on request. Direction ∈ {inbound, outbound}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug",
+        "info"
+      ]
     },
     "amaru::protocols::manager::peer::DISCONNECT_IGNORED": {
       "type": "object",
@@ -7573,10 +9020,14 @@
       ],
       "additionalProperties": false,
       "name": "disconnect_ignored",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::manager::peer",
-      "description": "A disconnect request could not be carried out. Reason ∈ {not_connected, connection_not_found, peer_already_removed, before_handshake}.",
-      "public": true
+      "description": "A disconnect request could not be carried out. Reason ∈ {not_connected, connection_not_found, peer_already_removed, before_handshake, rejected_duplicate}.",
+      "public": true,
+      "levels": [
+        "debug",
+        "info"
+      ]
     },
     "amaru::protocols::manager::peer::DUPLICATE_TERMINATED": {
       "type": "object",
@@ -7595,10 +9046,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "duplicate_terminated",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::manager::peer",
       "description": "A duplicate connection is terminated after its handshake completed",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::manager::peer::HANDSHAKE_COMPLETED": {
       "type": "object",
@@ -7609,8 +9063,8 @@
         "conn_id": {
           "type": "integer"
         },
-        "full_duplex_capable": {
-          "type": "boolean"
+        "role": {
+          "type": "string"
         },
         "full_duplex": {
           "type": "boolean"
@@ -7622,17 +9076,45 @@
       "required": [
         "peer",
         "conn_id",
-        "full_duplex_capable",
+        "role",
         "full_duplex",
         "advertisable"
       ],
       "optional": [],
       "additionalProperties": false,
       "name": "handshake_completed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::manager::peer",
       "description": "The handshake completed on a connection",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::protocols::manager::peer::INBOUND_REFUSED": {
+      "type": "object",
+      "properties": {
+        "peer": {
+          "type": "string"
+        },
+        "conn_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "peer",
+        "conn_id"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "inbound_refused",
+      "kind": "event",
+      "target": "amaru::protocols::manager::peer",
+      "description": "An inbound handshake was refused because the inbound cap is full",
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::manager::peer::LOCAL_USE_APPLIED": {
       "type": "object",
@@ -7655,10 +9137,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "local_use_applied",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::manager::peer",
       "description": "The connection finished converging to this local use",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::manager::peer::REMOVE": {
       "type": "object",
@@ -7673,7 +9158,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "remove",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::protocols::manager::peer",
       "description": "A peer was removed from the manager",
       "public": true
@@ -7699,10 +9184,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "set_local_use",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::manager::peer",
       "description": "A change of local use was requested on a connection",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::mux::EMPTY_SEGMENT": {
       "type": "object",
@@ -7721,10 +9209,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "empty_segment",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::mux",
       "description": "A segment header announcing an empty payload was received",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::mux::FAILED": {
       "type": "object",
@@ -7751,10 +9242,14 @@
       "optional": [],
       "additionalProperties": false,
       "name": "failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::mux",
       "description": "The muxer failed while moving data between a protocol and the network. Operation ∈ {send, recv_header, decode_header, recv_data, muxing, after_done}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn",
+        "error"
+      ]
     },
     "amaru::protocols::mux::protocol::BUFFER_EXCEEDED": {
       "type": "object",
@@ -7773,10 +9268,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "buffer_exceeded",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::mux::protocol",
       "description": "A protocol message does not fit in the buffer allotted to it",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::mux::protocol::BUFFER_OVERFLOW": {
       "type": "object",
@@ -7795,10 +9293,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "buffer_overflow",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::mux::protocol",
       "description": "Reducing a protocol buffer was not enough and the connection was killed",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::protocols::peer_selection::CONNECT_INITIAL": {
       "type": "object",
@@ -7817,10 +9318,34 @@
       "optional": [],
       "additionalProperties": false,
       "name": "connect_initial",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::peer_selection",
       "description": "Connect to the initial set of peers at startup",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
+    },
+    "amaru::protocols::peer_selection::TICK": {
+      "type": "object",
+      "properties": {
+        "full": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "full"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "tick",
+      "kind": "event",
+      "target": "amaru::protocols::peer_selection",
+      "description": "One wake of the selection timeout. `full` is true when this wake ran a round.",
+      "public": true,
+      "levels": [
+        "trace"
+      ]
     },
     "amaru::protocols::peer_selection::ledger::CANDIDATES_FAILED": {
       "type": "object",
@@ -7835,10 +9360,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "candidates_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::peer_selection::ledger",
       "description": "Failed to read registered relay addresses from the ledger",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::protocols::peer_selection::peer::ADDED": {
       "type": "object",
@@ -7857,10 +9385,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "added",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::peer_selection::peer",
       "description": "A peer was added to the outbound set",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::peer_selection::peer::ADDRESS_REJECTED": {
       "type": "object",
@@ -7879,10 +9410,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "address_rejected",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::peer_selection::peer",
       "description": "A candidate address was rejected and will not be used as a Peer.",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::protocols::peer_selection::peer::ADD_SKIPPED": {
       "type": "object",
@@ -7901,10 +9435,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "add_skipped",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::peer_selection::peer",
-      "description": "A peer was not added to the outbound set. Reason ∈ {already_added, too_many_inbound}.",
-      "public": true
+      "description": "A peer was not added to the outbound set. Reason ∈ {already_added}.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::peer_selection::peer::CONNECTED": {
       "type": "object",
@@ -7918,26 +9455,26 @@
         "direction": {
           "type": "string"
         },
-        "full_duplex_capable": {
-          "type": "boolean"
-        },
         "full_duplex": {
           "type": "boolean"
+        },
+        "local_use": {
+          "type": "string"
         }
       },
       "required": [
         "peer",
         "conn_id",
         "direction",
-        "full_duplex_capable",
-        "full_duplex"
+        "full_duplex",
+        "local_use"
       ],
       "optional": [],
       "additionalProperties": false,
       "name": "connected",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::protocols::peer_selection::peer",
-      "description": "A connection has been established and the handshake completed successfully.",
+      "description": "A connection has been established and the handshake completed successfully. local_use ∈ {none, maintenance, diffusion}.",
       "public": true
     },
     "amaru::protocols::peer_selection::peer::DEMOTED": {
@@ -7961,10 +9498,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "demoted",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::peer_selection::peer",
       "description": "Local use dropped to Maintenance. Reason ∈ {churn, uninteresting}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::peer_selection::peer::DISCONNECTED": {
       "type": "object",
@@ -7992,36 +9532,39 @@
       ],
       "additionalProperties": false,
       "name": "disconnected",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::protocols::peer_selection::peer",
       "description": "A connection has been terminated (graceful disconnect, error, handshake refusal, or network error).",
       "public": true
     },
-    "amaru::protocols::peer_selection::peer::RECONNECTED": {
+    "amaru::protocols::peer_selection::peer::REMOTE_USE": {
       "type": "object",
       "properties": {
         "peer": {
           "type": "string"
         },
-        "direction": {
-          "type": "string"
-        },
         "conn_id": {
           "type": "integer"
+        },
+        "remote_use": {
+          "type": "string"
         }
       },
       "required": [
         "peer",
-        "direction",
-        "conn_id"
+        "conn_id",
+        "remote_use"
       ],
       "optional": [],
       "additionalProperties": false,
-      "name": "reconnected",
-      "level": "TRACE",
+      "name": "remote_use",
+      "kind": "event",
       "target": "amaru::protocols::peer_selection::peer",
-      "description": "A peer reconnected while a previous connection was still registered; the older connection is dropped. Direction ∈ {inbound, outbound}.",
-      "public": true
+      "description": "The derived remote temperature of a bearer changed. remote_use ∈ {none, maintenance, diffusion}.",
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::peer_selection::peer::REMOVED": {
       "type": "object",
@@ -8048,10 +9591,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "removed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::peer_selection::peer",
       "description": "A peer was removed after behaving adversarially",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::protocols::peer_selection::peer::RESOLVED": {
       "type": "object",
@@ -8074,10 +9620,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "resolved",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::peer_selection::peer",
       "description": "A selected bootstrap name resolved to a single peer, ready to dial.",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::peer_selection::peer::RESOLVE_FAILED": {
       "type": "object",
@@ -8096,10 +9645,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "resolve_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::peer_selection::peer",
       "description": "Name resolution for a bootstrap candidate failed (no viable address).",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::protocols::peer_selection::sharing::RECEIVED": {
       "type": "object",
@@ -8126,10 +9678,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "received",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::peer_selection::sharing",
       "description": "Peer-sharing address list received from peer.",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::peer_selection::sharing::SENT": {
       "type": "object",
@@ -8156,10 +9711,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "sent",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::peer_selection::sharing",
       "description": "Peer-sharing request served for peer.",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::protocols::peer_sharing::initiator::PROTOCOL_VIOLATION": {
       "type": "object",
@@ -8183,10 +9741,13 @@
       ],
       "additionalProperties": false,
       "name": "protocol_violation",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::peer_sharing::initiator",
       "description": "The peer broke the peer-sharing protocol and the connection is terminated. Reason ∈ {no_request_in_flight, too_many_addresses}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::protocols::tx_submission::TERMINATING": {
       "type": "object",
@@ -8201,10 +9762,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "terminating",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::tx_submission",
       "description": "The tx-submission protocol is being torn down; the cause names the rule broken",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::protocols::tx_submission::initiator::OVER_ACKNOWLEDGED": {
       "type": "object",
@@ -8223,10 +9787,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "over_acknowledged",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::tx_submission::initiator",
       "description": "The peer acknowledged more transaction ids than are outstanding",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::protocols::tx_submission::initiator::UNAVAILABLE_TXS": {
       "type": "object",
@@ -8241,10 +9808,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "unavailable_txs",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::tx_submission::initiator",
       "description": "The peer asked for transactions that are not in our outstanding window",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::protocols::tx_submission::responder::MEMPOOL_TIMEOUT": {
       "type": "object",
@@ -8253,10 +9823,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "mempool_timeout",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::tx_submission::responder",
       "description": "The mempool did not answer an insertion batch before the timeout",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::protocols::tx_submission::responder::OVER_REPLIED": {
       "type": "object",
@@ -8279,10 +9852,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "over_replied",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::tx_submission::responder",
       "description": "The peer replied with more transaction ids than were requested",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::protocols::tx_submission::responder::RECEIVED_TX": {
       "type": "object",
@@ -8309,10 +9885,14 @@
       ],
       "additionalProperties": false,
       "name": "received_tx",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::tx_submission::responder",
       "description": "A transaction received from a peer was handed to the mempool. Outcome ∈ {inserted, invalid, mempool_full, duplicate}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug",
+        "warn"
+      ]
     },
     "amaru::protocols::tx_submission::responder::UNSOLICITED_TXS": {
       "type": "object",
@@ -8327,10 +9907,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "unsolicited_txs",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::protocols::tx_submission::responder",
       "description": "The peer sent transaction bodies that were never requested",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::setup::build::VERSION": {
       "type": "object",
@@ -8361,10 +9944,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "version",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::build",
       "description": "Running binary build/version identity (package version, git commit, target).",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::setup::file_descriptors::TOO_LOW": {
       "type": "object",
@@ -8391,10 +9977,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "too_low",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::file_descriptors",
       "description": "The soft limit on open files is below what Amaru needs",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::setup::file_descriptors::UNKNOWN": {
       "type": "object",
@@ -8409,10 +9998,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "unknown",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::file_descriptors",
       "description": "The open-file limit could not be queried",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::setup::lifecycle::CONSENSUS_DIED": {
       "type": "object",
@@ -8421,10 +10013,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "consensus_died",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::lifecycle",
       "description": "The consensus pipeline stopped while the node was still running",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::setup::lifecycle::TERMINATION_SIGNAL": {
       "type": "object",
@@ -8433,10 +10028,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "termination_signal",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::lifecycle",
       "description": "A termination signal was received; the node is shutting down",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::setup::observability::EXPORT_FAILED": {
       "type": "object",
@@ -8451,10 +10049,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "export_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::observability",
       "description": "OTLP export failed; collection may not be started for every signal",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::setup::observability::EXPORT_RECOVERED": {
       "type": "object",
@@ -8469,10 +10070,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "export_recovered",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::observability",
       "description": "OTLP collection recovered for previously unavailable signals",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::setup::observability::INIT": {
       "type": "object",
@@ -8495,10 +10099,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "init",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::observability",
       "description": "Observability stack initialization",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::setup::observability::PUBLICATIONS_CONFIG": {
       "type": "object",
@@ -8543,10 +10150,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "empty",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::peer_snapshot",
       "description": "A peer snapshot was loaded but holds no relay addresses",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::setup::peer_snapshot::LOADED": {
       "type": "object",
@@ -8581,10 +10191,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "loaded",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::peer_snapshot",
       "description": "A peer snapshot was loaded at startup",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::setup::peer_snapshot::MISSING": {
       "type": "object",
@@ -8599,10 +10212,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "missing",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::peer_snapshot",
       "description": "No embedded peer snapshot exists for the selected network",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::setup::pid::WRITE_FAILED": {
       "type": "object",
@@ -8617,10 +10233,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "write_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::pid",
       "description": "The PID file could not be created or written",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::setup::trace::FILTER": {
       "type": "object",
@@ -8652,10 +10271,14 @@
       ],
       "additionalProperties": false,
       "name": "filter",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::trace",
       "description": "Resolution of a trace filter from the environment",
-      "public": true
+      "public": true,
+      "levels": [
+        "info",
+        "warn"
+      ]
     },
     "amaru::setup::trace_buffer::DUMPED": {
       "type": "object",
@@ -8670,10 +10293,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "dumped",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::trace_buffer",
       "description": "The stage trace buffer was written to disk",
-      "public": true
+      "public": true,
+      "levels": [
+        "info"
+      ]
     },
     "amaru::setup::trace_buffer::DUMP_FAILED": {
       "type": "object",
@@ -8692,10 +10318,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "dump_failed",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::trace_buffer",
       "description": "The stage trace buffer could not be written to disk",
-      "public": true
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::stores::batch::COMMIT": {
       "type": "object",
@@ -8704,7 +10333,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "commit",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::batch",
       "description": "Commit a write batch",
       "public": true
@@ -8722,10 +10351,14 @@
       "optional": [],
       "additionalProperties": false,
       "name": "dropped_without_close",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::stores::batch",
       "description": "A transaction was dropped without commit or rollback. Outcome ∈ {left_open, auto_rolled_back}.",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn",
+        "error"
+      ]
     },
     "amaru::stores::batch::ROLLBACK": {
       "type": "object",
@@ -8734,7 +10367,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "rollback",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::batch",
       "description": "Rollback a write batch",
       "public": true
@@ -8755,7 +10388,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "store",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::consensus::block",
       "description": "Store a raw block",
       "public": true
@@ -8783,7 +10416,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "roll_forward",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::consensus::chain",
       "description": "Roll forward the chain to a point",
       "public": true
@@ -8811,7 +10444,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "switch_to_fork",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::consensus::chain",
       "description": "Switch the chain to a new fork",
       "public": true
@@ -8832,7 +10465,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "store",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::consensus::header",
       "description": "Store a block header",
       "public": true
@@ -8863,7 +10496,7 @@
       ],
       "additionalProperties": false,
       "name": "iter_scan",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger",
       "description": "Full scan for a given collection",
       "public": true
@@ -8875,7 +10508,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "add",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::accounts",
       "description": "Batch-upsert account entries",
       "public": true
@@ -8887,7 +10520,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "get",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::accounts",
       "description": "Point-read an account entry",
       "public": true
@@ -8899,7 +10532,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "remove",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::accounts",
       "description": "Batch-delete account entries",
       "public": true
@@ -8921,10 +10554,13 @@
       ],
       "additionalProperties": false,
       "name": "reset_many",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::stores::ledger::accounts",
-      "description": "Reset rewards counters for many accounts",
-      "public": true
+      "description": "Skipped resetting rewards because the account is not in the store",
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::stores::ledger::accounts::SET": {
       "type": "object",
@@ -8950,10 +10586,13 @@
       ],
       "additionalProperties": false,
       "name": "set",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::stores::ledger::accounts",
       "description": "Update rewards balance for a single account",
-      "public": true
+      "public": true,
+      "levels": [
+        "debug"
+      ]
     },
     "amaru::stores::ledger::cc_members::GET": {
       "type": "object",
@@ -8962,7 +10601,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "get",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::cc_members",
       "description": "Read a constitutional committee member",
       "public": true
@@ -8974,7 +10613,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "upsert",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::cc_members",
       "description": "Upsert a constitutional committee member",
       "public": true
@@ -8996,10 +10635,13 @@
       ],
       "additionalProperties": false,
       "name": "add",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::stores::ledger::dreps",
-      "description": "Batch-upsert DRep registrations",
-      "public": true
+      "description": "Skipped a DRep registration that carried no deposit",
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::stores::ledger::dreps::GET": {
       "type": "object",
@@ -9008,7 +10650,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "get",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::dreps",
       "description": "Point-read a DRep entry",
       "public": true
@@ -9030,10 +10672,13 @@
       ],
       "additionalProperties": false,
       "name": "remove",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::stores::ledger::dreps",
-      "description": "Record DRep de-registration",
-      "public": true
+      "description": "Skipped de-registration because the DRep is not in the store",
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::stores::ledger::dreps::SET_VALID_UNTIL": {
       "type": "object",
@@ -9052,10 +10697,13 @@
       ],
       "additionalProperties": false,
       "name": "set_valid_until",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::stores::ledger::dreps",
-      "description": "Refresh DRep expiry after a vote",
-      "public": true
+      "description": "Skipped refreshing expiry because the DRep is not in the store",
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::stores::ledger::epoch::CREATE_SNAPSHOT": {
       "type": "object",
@@ -9073,7 +10721,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "create_snapshot",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::epoch",
       "description": "Create ledger snapshot for epoch",
       "public": true
@@ -9101,7 +10749,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "prune_old_snapshots",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::epoch",
       "description": "Prune old snapshots",
       "public": true
@@ -9123,7 +10771,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "try_transition",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::epoch",
       "description": "Epoch transition tracking",
       "public": true
@@ -9135,7 +10783,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "apply_governance_updates",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::overlay",
       "description": "Enact all governance updates and flush their outcome to disk",
       "public": true
@@ -9163,7 +10811,7 @@
       ],
       "additionalProperties": false,
       "name": "pay_or_refund_accounts",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::overlay",
       "description": "Pay withdrawals to accounts, or refund deposits",
       "public": true
@@ -9199,7 +10847,7 @@
       ],
       "additionalProperties": false,
       "name": "pay_rewards",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::overlay",
       "description": "Pay rewards to all accounts before the epoch end",
       "public": true
@@ -9211,7 +10859,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "record_pruned_proposals",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::overlay",
       "description": "Pruned proposals at an epoch boundary, recorded to facilitate future stake distribution calculations.",
       "public": true
@@ -9223,7 +10871,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "reset_blocks_count",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::overlay",
       "description": "Reset blocks count to zero",
       "public": true
@@ -9235,7 +10883,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "reset_fees",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::overlay",
       "description": "Reset fees to zero",
       "public": true
@@ -9253,7 +10901,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "update_constitutional_committee",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::overlay",
       "description": "Add or remove CC members; or switch to a no-confidence state",
       "public": true
@@ -9275,7 +10923,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "update_or_retire_pools",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::overlay",
       "description": "Updating pools metadata or retiring pools at an epoch boundary.",
       "public": true
@@ -9287,7 +10935,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "add",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::pools",
       "description": "Batch-upsert pool entries",
       "public": true
@@ -9299,7 +10947,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "get",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::pools",
       "description": "Point-read a pool entry",
       "public": true
@@ -9324,10 +10972,13 @@
       ],
       "additionalProperties": false,
       "name": "remove",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::stores::ledger::pools",
-      "description": "Schedule pool retirement",
-      "public": true
+      "description": "Skipped scheduling retirement because the pool is not in the store",
+      "public": true,
+      "levels": [
+        "error"
+      ]
     },
     "amaru::stores::ledger::pots::GET": {
       "type": "object",
@@ -9336,7 +10987,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "get",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::pots",
       "description": "Read treasury/reserve/fees pots",
       "public": true
@@ -9348,7 +10999,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "put",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::pots",
       "description": "Write treasury/reserve/fees pots",
       "public": true
@@ -9360,7 +11011,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "add",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::proposals",
       "description": "Insert governance proposals",
       "public": true
@@ -9372,7 +11023,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "get",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::proposals",
       "description": "Read governance proposals",
       "public": true
@@ -9384,7 +11035,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "remove",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::proposals",
       "description": "Remove enacted or expired proposals",
       "public": true
@@ -9396,7 +11047,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "replace_all",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::recently_pruned_proposals",
       "description": "Inserting recently pruned proposals",
       "public": true
@@ -9408,7 +11059,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "insert",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::recently_unregistered_accounts",
       "description": "Insert a recently unregistered account",
       "public": true
@@ -9429,7 +11080,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "prune",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::recently_unregistered_accounts",
       "description": "Prune recently unregistered accounts",
       "public": true
@@ -9441,7 +11092,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "remove",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::recently_unregistered_accounts",
       "description": "Remove a recently unregistered account",
       "public": true
@@ -9453,7 +11104,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "get",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::slots",
       "description": "Point-read a slot/block-issuer entry",
       "public": true
@@ -9465,7 +11116,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "put",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::slots",
       "description": "Write a slot/block-issuer entry",
       "public": true
@@ -9483,10 +11134,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "unexpected_file",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::stores::ledger::snapshots",
       "description": "Skipped an unexpected file found in the snapshots directory",
-      "public": true
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::stores::ledger::snapshots::VALIDATE": {
       "type": "object",
@@ -9505,7 +11159,7 @@
       ],
       "additionalProperties": false,
       "name": "validate",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::snapshots",
       "description": "Validate sufficient snapshots exist",
       "public": true
@@ -9517,7 +11171,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "add",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::utxo",
       "description": "Batch-insert UTxO entries",
       "public": true
@@ -9529,7 +11183,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "get",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::utxo",
       "description": "Point-read a UTxO entry",
       "public": true
@@ -9541,7 +11195,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "remove",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::utxo",
       "description": "Batch-delete UTxO entries",
       "public": true
@@ -9553,7 +11207,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "add",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::votes",
       "description": "Record governance votes",
       "public": true
@@ -9565,7 +11219,7 @@
       "optional": [],
       "additionalProperties": false,
       "name": "remove",
-      "level": "TRACE",
+      "kind": "span",
       "target": "amaru::stores::ledger::votes",
       "description": "Remove now-obsolete governance votes",
       "public": true

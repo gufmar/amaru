@@ -14,6 +14,9 @@
 
 use std::fmt;
 
+#[cfg(any(test, feature = "test-utils"))]
+use proptest::prelude::{Arbitrary, BoxedStrategy, Strategy, any};
+
 use crate::{Hash, cbor, hash};
 
 #[derive(
@@ -26,7 +29,6 @@ use crate::{Hash, cbor, hash};
     Ord,
     std::hash::Hash,
     cbor::Encode,
-    cbor::Decode,
     serde::Serialize,
     serde::Deserialize,
 )]
@@ -39,6 +41,15 @@ pub struct TransactionInput {
     pub index: u16,
 }
 
+impl<'b, C: cbor::HasProtocolVersion> cbor::Decode<'b, C> for TransactionInput {
+    fn decode(d: &mut cbor::Decoder<'b>, ctx: &mut C) -> Result<Self, cbor::decode::Error> {
+        cbor::heterogeneous_array(d, |d, assert_len| {
+            assert_len(2)?;
+            Ok(Self { transaction_id: d.decode_with(ctx)?, index: d.decode_with(ctx)? })
+        })
+    }
+}
+
 impl fmt::Display for TransactionInput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}#{}", self.transaction_id, self.index)
@@ -46,21 +57,13 @@ impl fmt::Display for TransactionInput {
 }
 
 #[cfg(any(test, feature = "test-utils"))]
-pub use tests::*;
+impl Arbitrary for TransactionInput {
+    type Parameters = ();
+    type Strategy = BoxedStrategy<Self>;
 
-#[cfg(any(test, feature = "test-utils"))]
-mod tests {
-    use proptest::prelude::*;
-
-    use super::TransactionInput;
-    use crate::any_hash32;
-
-    prop_compose! {
-        pub fn any_transaction_input()(
-            id in any_hash32(),
-            ix in any::<u16>(),
-        ) -> TransactionInput {
-            TransactionInput { transaction_id: id, index: ix }
-        }
+    fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
+        (any::<Hash<{ hash::size::TRANSACTION_BODY }>>(), any::<u16>())
+            .prop_map(|(transaction_id, index)| TransactionInput { transaction_id, index })
+            .boxed()
     }
 }

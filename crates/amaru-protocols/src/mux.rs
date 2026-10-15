@@ -24,7 +24,7 @@ use std::{
 use amaru_kernel::{NonEmptyBytes, Peer, cbor};
 use amaru_observability::{Instrument, debug, debug_span, error, info, trace, warn};
 use amaru_ouroboros::ConnectionId;
-use amaru_pure_stage::{Effects, Instant, OrTerminateWith, SendData, StageRef, TryInStage, Void};
+use amaru_pure_stage::{Effects, Instant, OrTerminateWith, SendData, StageRef, TryInStage};
 use anyhow::Context;
 use bytes::{Buf, BufMut, Bytes, BytesMut, TryGetError};
 
@@ -53,6 +53,13 @@ const MAX_SEGMENT_SIZE: usize = 65535;
 pub const SDU_TIMEOUT_HANDSHAKE: Duration = Duration::from_secs(10);
 /// Mux SDU assembly/send timer after that Handshake has finished.
 pub const SDU_TIMEOUT_ESTABLISHED: Duration = Duration::from_secs(30);
+
+/// Bulk mailbox of the mux stage.
+///
+/// A hot duplex connection runs up to ten handlers. One `Send` and one `WantNext`
+/// from each, plus `FromNetwork` and `Written`, is 22; 24 leaves room for a
+/// `Register` or `SetSduTimeout` in the same burst.
+pub const MUX_MAILBOX_SIZE: usize = 24;
 
 const HEADER_LEADING_EDGE: NonZeroUsize = NonZeroUsize::MIN;
 const HEADER_REST: NonZeroUsize = const {
@@ -250,7 +257,7 @@ async fn done_trap(peer: Peer, msg: HandlerMessage, eff: Effects<HandlerMessage>
                 operation = "after_done",
                 error = "frame after MsgDone"
             );
-            return eff.terminate().await;
+            eff.terminate().await;
         }
     }
 }
@@ -470,8 +477,7 @@ async fn handle_msg(
         }
         MuxMessage::Terminate => {
             debug!(protocols::mux::TERMINATING, role = muxer.role().to_string().to_string().to_string().to_string());
-            eff.terminate::<Void>().await;
-            Ok(())
+            eff.terminate().await;
         }
         MuxMessage::SetSduTimeout(timeout) => {
             muxer.sdu_timeout = timeout;
@@ -544,7 +550,7 @@ async fn read_segment(
                 operation = "recv_data",
                 error = "sdu timeout (no time left for payload)"
             );
-            return eff.terminate().await;
+            eff.terminate().await;
         }
 
         let data = Network::new(&eff)
@@ -655,7 +661,7 @@ impl Muxer {
             self.do_register(proto_id, frame, max_buffer, handler);
             Ok(())
         }
-        .instrument(debug_span!(protocols::mux::protocol::REGISTER,))
+        .instrument(debug_span!(protocols::mux::protocol::REGISTER,).into())
         .await
     }
 
@@ -734,7 +740,7 @@ impl Muxer {
             }
             None
         }
-        .instrument(debug_span!(protocols::mux::protocol::NEXT_SEGMENT,))
+        .instrument(debug_span!(protocols::mux::protocol::NEXT_SEGMENT,).into())
         .await
     }
 
@@ -752,7 +758,7 @@ impl Muxer {
             };
             proto.received(timestamp, bytes, eff).await
         }
-        .instrument(debug_span!(protocols::mux::protocol::RECEIVED, bytes = byte_len))
+        .instrument(debug_span!(protocols::mux::protocol::HANDLE, bytes = byte_len).into())
         .await
     }
 
@@ -767,7 +773,7 @@ impl Muxer {
                 .await?;
             Ok(())
         }
-        .instrument(debug_span!(protocols::mux::protocol::WANT_NEXT,))
+        .instrument(debug_span!(protocols::mux::protocol::WANT_NEXT,).into())
         .await
     }
 }

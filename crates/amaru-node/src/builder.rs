@@ -30,7 +30,7 @@ use anyhow::Context;
 use tokio::runtime::Handle;
 
 use crate::{
-    DEFAULT_LISTEN_ADDRESS, default_chain_dir, default_ledger_dir, default_peer_for_network,
+    DEFAULT_PEERS_LISTEN_ON, default_chain_dir, default_ledger_dir,
     peer_snapshot::load_embedded_peer_snapshot,
     stages::{
         build_node::{NodeRunning, NodeStartError, build_and_run_node},
@@ -42,7 +42,7 @@ use crate::{
 ///
 /// ```ignore
 /// let running = NodeBuilder::new(NetworkName::Preprod)?
-///     .peer(default_peer_for_network(NetworkName::Preprod))
+///     .peer("123.456.789:3000")
 ///     .observers(LedgerObservers::new().on_adopted_block(|_| {}))
 ///     .start(runtime.handle()).await?;
 /// ```
@@ -52,11 +52,11 @@ pub struct NodeBuilder {
     ledger_dir: PathBuf,
     chain_dir: PathBuf,
     upstream_peers: Vec<String>,
-    use_default_peer_if_empty: bool,
     load_embedded_peer_snapshot: bool,
     target_upstream_peers: Option<usize>,
     target_downstream_peers: Option<usize>,
     listen_address: String,
+    bind_outbound: bool,
     submit_api_address: Option<String>,
     migrate_chain_db: bool,
     max_extra_ledger_snapshots: MaxExtraLedgerSnapshots,
@@ -78,11 +78,11 @@ impl NodeBuilder {
             ledger_dir: PathBuf::from(default_ledger_dir(network)),
             chain_dir: PathBuf::from(default_chain_dir(network)),
             upstream_peers: Vec::new(),
-            use_default_peer_if_empty: true,
             load_embedded_peer_snapshot: true,
             target_upstream_peers: None,
             target_downstream_peers: None,
-            listen_address: DEFAULT_LISTEN_ADDRESS.to_string(),
+            listen_address: DEFAULT_PEERS_LISTEN_ON.to_string(),
+            bind_outbound: true,
             submit_api_address: None,
             migrate_chain_db: false,
             max_extra_ledger_snapshots: MaxExtraLedgerSnapshots::default(),
@@ -110,20 +110,12 @@ impl NodeBuilder {
         S: Into<String>,
     {
         self.upstream_peers = peers.into_iter().map(Into::into).collect();
-        self.use_default_peer_if_empty = false;
         self
     }
 
     /// Append a single upstream peer
     pub fn peer(mut self, peer: impl Into<String>) -> Self {
         self.upstream_peers.push(peer.into());
-        self.use_default_peer_if_empty = false;
-        self
-    }
-
-    /// When no peers were set, do not fall back to the network default bootstrap peer
-    pub fn no_default_peer(mut self) -> Self {
-        self.use_default_peer_if_empty = false;
         self
     }
 
@@ -145,6 +137,11 @@ impl NodeBuilder {
 
     pub fn listen_address(mut self, addr: impl Into<String>) -> Self {
         self.listen_address = addr.into();
+        self
+    }
+
+    pub fn bind_outbound(mut self, bind: bool) -> Self {
+        self.bind_outbound = bind;
         self
     }
 
@@ -201,10 +198,7 @@ impl NodeBuilder {
             ),
         })?;
 
-        let mut upstream_peers = self.upstream_peers;
-        if upstream_peers.is_empty() && self.use_default_peer_if_empty {
-            upstream_peers.push(default_peer_for_network(self.network).to_string());
-        }
+        let upstream_peers = self.upstream_peers;
 
         let (peer_snapshot_peers, peer_snapshot_unresolved) = if self.load_embedded_peer_snapshot {
             match load_embedded_peer_snapshot(self.network).context("load embedded peer snapshot")? {
@@ -236,6 +230,7 @@ impl NodeBuilder {
             peer_snapshot_unresolved,
             network_magic: self.network.to_network_magic(),
             listen_address: self.listen_address,
+            bind_outbound_to_listen_port: self.bind_outbound,
             migrate_chain_db: self.migrate_chain_db,
             submit_api_address: self.submit_api_address,
             observers: self.observers,

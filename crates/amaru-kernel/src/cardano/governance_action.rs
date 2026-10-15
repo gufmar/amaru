@@ -12,19 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::BTreeMap;
+
+#[cfg(any(test, feature = "test-utils"))]
+use proptest::{
+    collection,
+    prelude::{Arbitrary, BoxedStrategy, Just, Strategy, any, prop_oneof},
+};
+
 use crate::{
     Constitution, Credential, Epoch, Hash, KeyValuePairs, Lovelace, ProposalId, ProtocolParamUpdate, ProtocolVersion,
-    RationalNumber, RewardAccount, cbor, hash, utils::cbor::SerialisedAsSet,
+    RewardAccount, UnitRationalNumber, cbor, hash, utils::cbor::SerialisedAsSet,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum GovernanceAction {
     ParameterChange(Option<ProposalId>, Box<ProtocolParamUpdate>, Option<Hash<{ hash::size::SCRIPT }>>),
     HardForkInitiation(Option<ProposalId>, ProtocolVersion),
-    TreasuryWithdrawals(KeyValuePairs<RewardAccount, Lovelace>, Option<Hash<{ hash::size::SCRIPT }>>),
+    TreasuryWithdrawals(BTreeMap<RewardAccount, Lovelace>, Option<Hash<{ hash::size::SCRIPT }>>),
     NoConfidence(Option<ProposalId>),
     // TODO: align types with ConstitutionalCommitteeUpdate
-    UpdateCommittee(Option<ProposalId>, Vec<Credential>, KeyValuePairs<Credential, Epoch>, RationalNumber),
+    UpdateCommittee(Option<ProposalId>, Vec<Credential>, KeyValuePairs<Credential, Epoch>, UnitRationalNumber),
     NewConstitution(Option<ProposalId>, Constitution),
     Information,
 }
@@ -52,7 +60,9 @@ impl<'b, C: cbor::HasProtocolVersion> cbor::decode::Decode<'b, C> for Governance
 
                 2 => {
                     assert_len(3)?;
-                    let a = d.decode_with(ctx)?;
+                    // The ledger holds the withdrawals in a `Map`, so they are kept in key order
+                    // rather than in the order they arrived in, and a repeated key is an error.
+                    let a = cbor::btree_map_with_unique_keys(d, ctx)?;
                     let b = d.decode_with(ctx)?;
                     Ok(Self::TreasuryWithdrawals(a, b))
                 }
@@ -147,6 +157,60 @@ impl<C: cbor::HasProtocolVersion> cbor::encode::Encode<C> for GovernanceAction {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl Arbitrary for GovernanceAction {
+    type Parameters = ();
+    type Strategy = BoxedStrategy<Self>;
+
+    fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
+        let parameter_change =
+            (any::<Option<ProposalId>>(), any::<ProtocolParamUpdate>(), any::<Option<Hash<{ hash::size::SCRIPT }>>>())
+                .prop_map(|(parent, update, guardrails)| {
+                    GovernanceAction::ParameterChange(parent, Box::new(update), guardrails)
+                });
+
+        let hard_fork_initiation = (any::<Option<ProposalId>>(), any::<ProtocolVersion>())
+            .prop_map(|(parent, version)| GovernanceAction::HardForkInitiation(parent, version));
+
+        let treasury_withdrawals = (
+            collection::btree_map(any::<RewardAccount>(), any::<Lovelace>(), 0..3),
+            any::<Option<Hash<{ hash::size::SCRIPT }>>>(),
+        )
+            .prop_map(|(withdrawals, guardrails)| GovernanceAction::TreasuryWithdrawals(withdrawals, guardrails));
+
+        let no_confidence = any::<Option<ProposalId>>().prop_map(GovernanceAction::NoConfidence);
+
+        let update_committee = (
+            any::<Option<ProposalId>>(),
+            collection::btree_set(any::<Credential>(), 0..3),
+            collection::btree_map(any::<Credential>(), any::<Epoch>(), 0..3),
+            any::<UnitRationalNumber>(),
+        )
+            .prop_map(|(parent, to_remove, to_add, quorum)| {
+                GovernanceAction::UpdateCommittee(
+                    parent,
+                    to_remove.into_iter().collect(),
+                    KeyValuePairs::from(to_add),
+                    quorum,
+                )
+            });
+
+        let new_constitution = (any::<Option<ProposalId>>(), any::<Constitution>())
+            .prop_map(|(parent, constitution)| GovernanceAction::NewConstitution(parent, constitution));
+
+        prop_oneof![
+            parameter_change,
+            hard_fork_initiation,
+            treasury_withdrawals,
+            no_confidence,
+            update_committee,
+            new_constitution,
+            Just(GovernanceAction::Information),
+        ]
+        .boxed()
     }
 }
 

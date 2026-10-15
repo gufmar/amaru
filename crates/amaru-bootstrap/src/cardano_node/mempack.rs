@@ -15,9 +15,9 @@
 use std::collections::BTreeMap;
 
 use amaru_kernel::{
-    Address, AssetName, Bytes, Credential, Hash, MemoizedDatum, MemoizedPlutusData, MemoizedScript,
-    MemoizedTransactionOutput, Multiasset, Network, NonEmptyKeyValuePairs, PlutusScript, PositiveCoin, ShelleyAddress,
-    StakeReference, Value, from_cbor,
+    Address, AssetName, Assets, Bytes, Credential, Hash, MemoizedDatum, MemoizedPlutusData, MemoizedScript,
+    MemoizedTransactionOutput, Multiasset, Network, PlutusScript, PositiveCoin, ShelleyAddress, StakeReference, Value,
+    from_cbor,
 };
 use anyhow::anyhow;
 
@@ -431,7 +431,9 @@ fn decode_multiasset_rep(rep: &[u8], asset_count: usize) -> anyhow::Result<Multi
 
         let quantity: PositiveCoin =
             quantity.try_into().map_err(|_| anyhow!("invalid non-positive asset quantity {quantity}"))?;
-        bundles.entry(Hash::from(&rep[policy_offset..policy_end])).or_default().push((
+        let policy_id = Hash::try_from(&rep[policy_offset..policy_end])
+            .map_err(|e| anyhow!("invalid policy id in multiasset representation: {e}"))?;
+        bundles.entry(policy_id).or_default().push((
             AssetName::try_from(&rep[asset_offset..asset_end])
                 .map_err(|_| anyhow!("invalid asset name for offset {asset_offset} and end {asset_end}"))?,
             quantity,
@@ -439,9 +441,10 @@ fn decode_multiasset_rep(rep: &[u8], asset_count: usize) -> anyhow::Result<Multi
     }
 
     let mut policies = BTreeMap::new();
-    for (policy_id, mut assets) in bundles {
-        assets.sort_by_key(|(a, _)| *a);
-        policies.insert(policy_id, NonEmptyKeyValuePairs::try_from(assets).map_err(|e| anyhow!("{e}"))?);
+    for (policy_id, assets) in bundles {
+        let assets = Assets::try_from(assets.into_iter().collect::<BTreeMap<_, _>>())
+            .map_err(|e| anyhow!("policy {policy_id}: {e}"))?;
+        policies.insert(policy_id, assets);
     }
 
     Ok(policies.into())

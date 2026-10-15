@@ -65,7 +65,7 @@ pub fn migrate_db(store: &RocksDBStore<DB>) -> Result<(u16, u16), StoreError> {
     let version = get_version(store)?;
 
     for n in version..CHAIN_DB_VERSION {
-        info!(consensus::chain_db_migration::EXECUTE, from = n, to = n + 1);
+        info!(consensus::db_chain_migration::EXECUTE, from = n, to = n + 1);
         MIGRATIONS[n as usize](store)?
     }
     Ok((version, CHAIN_DB_VERSION))
@@ -100,7 +100,7 @@ pub(crate) fn migrate_to_v3(store: &RocksDBStore<DB>) -> Result<(), StoreError> 
     // the reason is that v3 stores the block validation result, which cannot be derived from the v2 DB without
     // running the consensus algorithm and ledger validation. previously, blocks were stored before validation,
     warn!(
-        consensus::chain_db_migration::WARN,
+        consensus::db_chain_migration::WARN,
         to = 3u16,
         reason = "migrating chain DB to version 3 makes possibly incorrect assumption of valid best chain, better set it to the anchor hash"
     );
@@ -121,7 +121,7 @@ pub(crate) fn migrate_to_v3(store: &RocksDBStore<DB>) -> Result<(), StoreError> 
     }
 
     info!(
-        consensus::chain_db_migration::RESET_BEST_CHAIN,
+        consensus::db_chain_migration::RESET_BEST_CHAIN,
         prev_best_chain = original_best_chain_hash,
         new_best_chain = anchor_hash
     );
@@ -131,7 +131,7 @@ pub(crate) fn migrate_to_v3(store: &RocksDBStore<DB>) -> Result<(), StoreError> 
 
 pub(crate) fn migrate_to_v4(store: &RocksDBStore<DB>) -> Result<(), StoreError> {
     warn!(
-        consensus::chain_db_migration::WARN,
+        consensus::db_chain_migration::WARN,
         to = 4u16,
         reason = "migrating chain DB to version 4: opcert sequence numbers are reconstructed from stored \
            headers only; counters from before this database was bootstrapped are unknown, which can \
@@ -213,17 +213,19 @@ fn rewrite_chain_prefix_points(store: &RocksDBStore<DB>) -> Result<(), StoreErro
 /// Convert a 32-byte header-hash encoding to a `Point`. Returns `Ok(None)` when `bytes` is
 /// already a NetworkTip (or any other non-hash value left for the reader to reject).
 fn point_from_legacy_hash(store: &RocksDBStore<DB>, bytes: &[u8]) -> Result<Option<Point>, StoreError> {
-    if bytes.len() != HEADER {
+    let Ok(hash) = HeaderHash::try_from(bytes) else {
         return Ok(None);
-    }
-    Ok(Some(point_from_hash(store, HeaderHash::from(bytes))?))
+    };
+    Ok(Some(point_from_hash(store, hash)?))
 }
 
 /// Read a pre-v6 singleton key: a 32-byte header hash, or missing (treated as origin).
 fn read_legacy_hash(store: &RocksDBStore<DB>, key: &[u8]) -> Result<HeaderHash, StoreError> {
     match store.db.get(key).map_err(|e| StoreError::ReadError { error: e.to_string() })? {
         None => Ok(ORIGIN_HASH),
-        Some(bytes) if bytes.len() == HEADER => Ok(HeaderHash::from(&bytes[..])),
+        Some(bytes) if bytes.len() == HEADER => {
+            HeaderHash::try_from(&bytes[..]).map_err(|e| StoreError::ReadError { error: e.to_string() })
+        }
         Some(bytes) => {
             Err(StoreError::ReadError { error: format!("expected a 32-byte header hash, got {} bytes", bytes.len()) })
         }

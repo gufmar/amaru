@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use amaru_observability::amaru::{bootstrap, consensus, ledger, mempool, protocols};
+use amaru_observability::amaru::{blockperf, bootstrap, consensus, ledger, mempool, protocols};
 
 use crate::events::TelemetryRecord;
 
-pub const CONSENSUS_TARGET: &str = consensus::chain_db::OPEN::TARGET;
+pub const CONSENSUS_TARGET: &str = consensus::db_chain::OPEN::TARGET;
 pub const LEDGER_TARGET: &str = ledger::tip::UPDATE::TARGET;
 pub const PROTOCOLS_TARGET: &str = protocols::peer_selection::peer::CONNECTED::TARGET;
 
@@ -30,14 +30,20 @@ pub enum TelemetryEvent {
     GovernanceActivityUpdate,
     GovernanceEnacting,
     GovernanceRatifying,
+    ChainSyncIntersect,
+    ChainSyncRollBackward,
+    ChainSyncRollForwardDone,
+    HeaderAnnounced,
     HeaderLifecycle,
     KeepaliveRoundTrip,
+    LocalUseApplied,
     MempoolStateUpdate,
     NewGovernanceUpdates,
     PeerConnected,
     PeerDisconnected,
     PeerResolved,
     PotsDump,
+    RemoteUse,
     ProposalActive,
     ProposalDrop,
     ProposalSkip,
@@ -89,12 +95,24 @@ impl TelemetryEvent {
             Some(Self::BootstrapPotsImport)
         } else if mempool::state::UPDATE::matches(&record.target, &record.name) {
             Some(Self::MempoolStateUpdate)
+        } else if consensus::chainsync::ROLL_FORWARD_DONE::matches(&record.target, &record.name) {
+            Some(Self::ChainSyncRollForwardDone)
+        } else if consensus::chainsync::INTERSECT_FOUND::matches(&record.target, &record.name) {
+            Some(Self::ChainSyncIntersect)
+        } else if consensus::chainsync::ROLL_BACKWARD::matches(&record.target, &record.name) {
+            Some(Self::ChainSyncRollBackward)
+        } else if blockperf::header::ANNOUNCED::matches(&record.target, &record.name) {
+            Some(Self::HeaderAnnounced)
         } else if consensus::perf::header::LIFECYCLE::matches(&record.target, &record.name) {
             Some(Self::HeaderLifecycle)
         } else if protocols::keepalive::peer::ROUND_TRIP::matches(&record.target, &record.name) {
             Some(Self::KeepaliveRoundTrip)
         } else if protocols::peer_selection::peer::CONNECTED::matches(&record.target, &record.name) {
             Some(Self::PeerConnected)
+        } else if protocols::manager::peer::LOCAL_USE_APPLIED::matches(&record.target, &record.name) {
+            Some(Self::LocalUseApplied)
+        } else if protocols::peer_selection::peer::REMOTE_USE::matches(&record.target, &record.name) {
+            Some(Self::RemoteUse)
         } else if protocols::peer_selection::peer::DISCONNECTED::matches(&record.target, &record.name) {
             Some(Self::PeerDisconnected)
         } else if protocols::peer_selection::peer::RESOLVED::matches(&record.target, &record.name) {

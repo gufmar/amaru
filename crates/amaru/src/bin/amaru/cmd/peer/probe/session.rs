@@ -29,7 +29,7 @@ use amaru_protocols::{
     observability::{
         self, InitiatorMessage as ObsLocal, InitiatorResult as ObsResult, Publication, register_observability_initiator,
     },
-    peer_sharing::{PeerSharingMessage, ShareResult, register_peer_sharing_initiator},
+    peer_sharing::{ShareResult, register_peer_sharing_initiator_oneshot},
     protocol::{Inputs, PROTO_HANDSHAKE, Role, ingress_limit},
     protocol_messages::{version_data::PeerSharing, version_number::VersionNumber, version_table::VersionTable},
     store_effects::ResourceHeaderStore,
@@ -872,15 +872,15 @@ async fn start_peershare(
     mark(&mut state, "peershare_start");
     state.phase = Phase::PeerShare;
     let reply_to = eff.me_ref().contramap(DriverMsg::Share);
-    let ps = register_peer_sharing_initiator(&muxer, state.peer, state.conn_id, eff, DriverMsg::ChildDied).await;
-    eff.send(
-        &ps,
-        PeerSharingMessage::Start {
-            amount: state.peer_share_amount,
-            initial_delay: Duration::ZERO,
-            interval: Duration::from_secs(3600),
-            reply_to,
-        },
+    let _ps = register_peer_sharing_initiator_oneshot(
+        &muxer,
+        state.peer,
+        state.conn_id,
+        state.peer_share_amount,
+        Duration::ZERO,
+        reply_to,
+        eff,
+        DriverMsg::ChildDied,
     )
     .await;
     eff.set_timeout_at(3, state.protocol_timeout, DriverMsg::StepTimeout).await;

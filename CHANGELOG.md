@@ -35,6 +35,88 @@ Other guiding principles:
   ```
 -->
 
+## v10.11.20261015 _[unreleased; planned for 2026-10-15]_
+
+### Added
+
+- **amaru**: `amaru keys kes create --signing-key PATH --verification-key PATH` generates cardano-cli compatible KES key files without replacing existing files.
+- **amaru**: `--log-output PATH:FILTER` (or `AMARU_LOG_OUTPUT`) writes an extra log file without replacing the terminal, the TUI, or OpenTelemetry. Repeat the flag for more files. The value is split at the first colon. A path ending in `.ndjson` uses the same JSON format as `--with-json-traces`, one object per line; any other path is text. Span close lines include busy and idle time. `amaru --log-output effects.ndjson:amaru_pure_stage::effect=debug node run` records how long each external effect runs.
+  `try_setup_observability` and `setup_observability` take those file specs as an extra argument.
+- **amaru**: header forward, fetch wait, block fetch, and fork switch are spans on `amaru::network`, parented on the `roll_forward.process` span. Blockperf lines for a header carry that span's trace id. A rejected header logs its lifecycle once.
+- **amaru**: `amaru keys kes create --signing-key PATH --verification-key PATH` generates raw binary KES key files without replacing existing files. Use `--key-format=compatible` for cardano-cli JSON text envelopes. The node accepts either KES signing-key format automatically.
+- **amaru**: `amaru keys kes create --signing-key PATH --verification-key PATH` generates raw binary KES key files without replacing existing files. The node also accepts legacy cardano-cli KES signing-key text envelopes.
+- **amaru-node**: Mithril sync shows block ingestion count, speed, and estimated time remaining in the terminal.
+
+### Changed
+
+- **amaru**: align command-line with the guidelines from EDR-0019; as a consequence, many options (and their corresponding environment variables) have been renamed. However, aliases are in place so that existing scripts or usage of Amaru should keep working. Yet, old options and variables are now deprecated and will be remove in the future.
+- **amaru**: remove legacy commands that were deprecated and hidden away months ago.
+- **amaru**: the operational certificate for block forging is passed with `--operator-cert` (or `AMARU_OPERATOR_CERT`). The legacy `--operational-certificate` and `AMARU_OPERATIONAL_CERTIFICATE` are still accepted.
+- **amaru**: the connection manager and peer selection each keep one extra mailbox slot per allowed upstream and downstream peer, on top of the default of 10. The mux mailbox holds 24 messages. The chain-sync initiator mailbox holds the pipeline depth plus 4. A block-fetch handler mailbox stays at 10 unless its pipeline is deeper than 3.
+- **amaru**: the connection manager refuses a new inbound handshake once `max_inbound` live inbound connections exist. The default is 10, and the node sets it from the downstream peer target.
+- **amaru-tui**: the peer table's Adopt column is the time from receiving the block to adopting it. Each peer row shows the share of recent live arrivals within 1s, 3s, and 5s.
+- **amaru-tui**: the peers title shows maintenance peers as a dimmer `+N` after each diffusion count, as in `10+3 up / 8+1 dn`. A side with no maintenance peers shows only the diffusion count.
+- **amaru-tui**: each peer row shows a header announcement score. The first peer to announce a header scores 6, the second scores 3, and the third scores 1.
+- **amaru-tui**: each chainsync peer row shows the signed gap from that peer's latest roll-forward (`ChainSync`) and advertised tip (`Adopted`) to this node's adopted height. Positive means the peer is ahead.
+- **amaru**: chainsync roll-forward completion is included in debug traces, with the header height and the peer's tip height.
+- **amaru**: a connection reports the remote peer's temperature (`none`, `maintenance`, or `diffusion`) when it changes, and the `connected` trace includes the local temperature. A share reply includes this node's listen address. A duplex inbound connection at maintenance runs peer-sharing. A peer that stays silent after a non-blocking transaction-id request is disconnected.
+- **amaru**: outbound connections bind to the listen port. `--peers-ephemeral-outbound-port` leaves the local port to the kernel. If the listen port cannot be reused, the connect falls back to an ephemeral port.
+- **amaru**: a connection with nothing running locally and no remote initiator protocols is closed. A one-way connection that has already shown a remote initiator closes on the next cold round. Until that first initiator, and for a duplex connection, both sides stay up for 30 seconds after they go cold. Chain-sync `RequestNext` counts as the remote peer running chain-sync, the same as finding an intersection.
+
+### Fixed
+
+- **amaru**: a fork switch logs each block it adopts. Those blocks, other than the new tip, are recorded as validated headers, so a later chain prune does not report them as pruned.
+- **amaru**: startup no longer logs `db_chain.initialize` when the chain store does not contain the ledger tip. The process still exits with the mismatch error.
+- **amaru**: the trace catalog describes an unknown pool retirement, an unknown reward reset, a DRep registration without a deposit, an unknown DRep removal, and an unknown DRep expiry refresh as those skips.
+- **amaru**: a fork switch that is replaced reports its own duration. A different fork's span is no longer reused.
+- **amaru-tui**: a chainsync roll-forward replaces that peer's advertised tip, including when the new tip is lower. A tip one block behind the header it just sent still shows the header height.
+- **amaru**: adopting a block records its header lifecycle as valid. A chain-selection notice that is still queued when the node stops no longer leaves that block without one.
+- **amaru-tui**: the peers view keeps one row per live connection, including use reported before that connection is adopted. A closed connection is removed.
+- **amaru**: the death of an outbound bearer rejected as a duplicate no longer counts as a failed dial, and does not add connection malus, while that peer still has a live connection.
+- **amaru**: a peer that does not answer a share request within 60 seconds drops that connection. The node does not ask again on it.
+- **amaru**: chainsync stops when a peer has no intersection, and when a peer rolls back to a point this node does not have. The rollback waits 180 seconds before that peer is used upstream again. Neither case bans the peer.
+- **amaru**: once a demotion period has elapsed, peer selection clears it even when the upstream slots are full, and does not keep running a full selection round every second.
+- **amaru**: only a failed connect or a dial that never finishes holds off the next dial. Starting a dial, or a connection that closed, does not. A replacement dial after a close is not cancelled when that same close is seen again.
+- **amaru**: a notice that an old connection died is not counted as a failed dial when a later dial to that peer is already in progress.
+- **amaru**: block fetch reads which connections may initiate from the peer resource. A connection no longer sends that fact to the connection manager, so a full tip burst cannot deadlock the two.
+- **amaru-protocols**: fixed transition of the initiator from Diffusion to Maintenance so that churned connections are not forcibly closed.
+- **amaru**: `amaru mithril sync` requires `--network` or `AMARU_NETWORK`; it no longer defaults to preprod.
+- **amaru-mithril**: snapshot downloads use less CPU to track progress as the number of immutable files grows.
+- **amaru-ledger**: DReps registered and deregistered within one block no longer produce spurious "unknown drep" errors during persistence.
+
+## v10.11.20261008 _[unreleased; planned for 2026-10-08]_
+
+### Added
+
+- **amaru**: `snapshot epochs` lists available starting epochs from published bootstrap snapshots, in ascending order, for use with `node bootstrap --epoch`.
+- **amaru-pure-stage**: a stage can try to send without waiting (`Queued`, `Full`, or `Gone`), and each stage can set its own mailbox size. The default stays 10. A call reports `NotAdmitted` when the deadline fired before the request was queued, and `TimedOut` when the request was queued and no reply came before the deadline.
+
+### Changed
+
+- **amaru**: completed terminal progress bars disappear and are replaced by a log summarizing the completed work.
+- **amaru-protocols**: block-fetch peer timeouts are logged as warnings instead of errors.
+
+### Fixed
+
+- **amaru**: a block fetch that cannot hand its request to a peer now hits that request's timeout and continues, instead of waiting forever and leaving the node stuck. ([#1453][])
+- **amaru-kernel**: fix some decoding gaps and made all the decoders conformant w.r.t the [`cbor-dataset` repository](https://github.com/r2rationality/cardano-cbor-dataset/pull/1).
+- **amaru-kernel**: fixed the ordering of multi assets.
+- **amaru-node**: shutdown cancels and joins the rewards worker before reporting cleanup complete. A worker that cannot stop within the ledger shutdown timeout reports incomplete cleanup.
+- **amaru-node**: startup reports ledger lock contention separately from other `LOCK` file errors, retains the underlying error for embedders, and identifies whether a read-only check or writable open failed. Lock errors no longer suggest deleting the `LOCK` file.
+- **amaru-stores**: immutable epoch snapshots allow concurrent readers, avoiding database lock failures during restarts and bootstrap handoffs.
+- **amaru-uplc**: bound `writeBits` input at pv11.
+- **amaru-uplc**: correctly cost strings at pv10.
+- **amaru-uplc**: do not allow case on constants at v10.
+- **amaru-uplc**: do not run scripts with disallowed plutus language versions.
+- **amaru-uplc**: evaluate `shiftByteString` and `rotateByteString` when arg is outside i64 bounds at pv10.
+- **amaru-uplc**: fix a costing bug when working with some polymorphic types.
+- **amaru-uplc**: fix a panic when shiftByteString is called with a whole byte shift.
+- **amaru-uplc**: prevent a crash by wrapping negative consByteString input modulo 256 for Plutus V1/v2. This matches the Haskell behavior.
+- **amaru-uplc**: prevent a crash when using integers outside [0, 2^64) in constrData.
+- **amaru-uplc**: reject flat encoded values with extraneous tags.
+- **amaru-uplc**: reject out of range indexByteString and indexArray indices.
+- **amaru-uplc**: saturate dropList cost instead of panicking beyond a u64.
+
 ## v10.11.20261001 _[unreleased; planned for 2026-10-01]_
 
 - **amaru**: add `amaru peer probe` to check TCP RTT, N2N handshake, tip, peer-share, and experimental observability against `IP:PORT`
@@ -44,7 +126,7 @@ Other guiding principles:
 - **amaru**: `cardano-cli ping` from cardano-cli 11.2 onwards completes the handshake again. That client offers node-to-node version 16 alongside versions 14 and 15; version 16 is kept as raw CBOR and the node still agrees version 15. ([#1425](https://github.com/pragma-org/amaru/issues/1425))
 ### Added
 
-- **amaru**: on preprod, preview, and other testnets, `amaru node run` forges blocks when given `--kes-signing-key-file`, `--vrf-signing-key-file`, and `--operational-certificate` (unencrypted cardano-cli files). Mainnet refuses those flags. Omitting them leaves the node a follower. Startup fails when the certificate's cold signature does not verify, or when its sequence number is not the chain's counter for that pool or exactly one ahead.
+- **amaru**: on preprod, preview, and other testnets, `amaru node run` forges blocks when given `--operator-kes`, `--operator-vrf`, and `--operator-cert` (unencrypted cardano-cli files). Mainnet refuses those flags. Omitting them leaves the node a follower. Startup fails when the certificate's cold signature does not verify, or when its sequence number is not the chain's counter for that pool or exactly one ahead.
 - **amaru-bootstrap**: embedding applications can observe canonical bootstrap stages through a public API.
 - **amaru-node**: embedding applications can run cancellable Mithril synchronization through a public API.
 - **amaru**: `amaru dev env generate` to generate a (curated) list of environment variables available for Amaru main commands, acting as a configuration file.
@@ -54,6 +136,7 @@ Other guiding principles:
 - **amaru**: a failed outbound connection attempt times out after 2 seconds. Each failure adds a large connection penalty, so healthier peers are dialed first. When no healthier peer can fill an open slot, the penalized peer is dialed anyway. A peer is not dialed again within 2 seconds of a connect attempt or a connection failure. ([#1428](https://github.com/pragma-org/amaru/issues/1428))
 - **amaru**: block fetch asks further peers 30ms, 80ms, and 150ms after the first request, until every block in that request has arrived. A peer that returns only a prefix does not stop the later asks, and a slow first announcer no longer waits out the 5s fetch timeout before anyone else is asked. ([#1423](https://github.com/pragma-org/amaru/issues/1423))
 - **amaru**: Debian and RPM environment files now list every supported node setting with its description, default, and expected type.
+- **amaru-kernel**: use RustCrypto hash implementations for BLAKE2b, SHA-2, SHA-3, Keccak, and RIPEMD.
 
 ### Fixed
 
@@ -66,7 +149,7 @@ Other guiding principles:
 - **amaru**: block propagation can be followed on its own. `AMARU_LOG=off,amaru::blockperf=info` prints, for each block, the first three peers that announced the header (`header.announced`, with rank), the peers asked for the body (`block.requested`), each peer that delivered the body in arrival order (`block.received`), and local adoption (`block.adopted`). The logging is at DEBUG level while syncing. ([#1396](https://github.com/pragma-org/amaru/issues/1396))
 - **amaru**: `chainsync.chain_lagging` is logged when near-now headers have been arriving for a minute and the adopted tip is not getting closer to the wall clock. It stays quiet while sync is still adopting faster than 10 blocks per second, including while sync is finishing. ([#1396](https://github.com/pragma-org/amaru/issues/1396))
 - **amaru-node**: `amaru mithril sync` can resume from stores created by `amaru node bootstrap`, including stores whose chain has no adopted best tip yet.
-- **amaru-node**: `amaru mithril sync --ingest-until-slot` downloads immutable files only through the chunk containing the requested slot.
+- **amaru-node**: `amaru mithril sync --until-slot` downloads immutable files only through the chunk containing the requested slot.
 - **amaru-node**: node startup rejects incompatible ledger and adopted-chain tips and reports that recovery or rebootstrap is required.
 - **amaru-protocols**: BlockFetch rejects requests whose endpoint slot does not match the requested block hash.
 - **amaru-protocols**: a connection stays up when a peer starts a mini-protocol this node will serve before that protocol's handler is registered. On a connection this node accepted, that includes a handshake that arrives before the handshake handler is registered.
@@ -75,6 +158,8 @@ Other guiding principles:
 - **amaru-node**: startup fails when the chain store is missing the ledger tip header. A bootstrap snapshot stores that tip without its parent block. Forging in the snapshot tip's own slot is skipped when that parent header is absent.
 - **amaru**: report errors on stderr when tracing isn't available on specific commands.
 - **amaru-uplc**: lazily size builtin arguments depending on the costing function; instead of systematically doing it upfront. Mean and median VM execution time reduced by ~20% thanks to this.
+- **amaru-uplc**: reject out-of-range integer arguments to arithmetic Plutus builtins under the current ledger semantics, matching the Cardano reference evaluator.
+- **amaru-uplc**: reject weak Ed25519 identity tuples and uncompressed secp256k1 public keys in Plutus signature builtins.
 
 ## [v10.11.20260925](https://github.com/pragma-org/amaru/releases/tag/v10.11.20260925)
 
@@ -590,3 +675,4 @@ Other guiding principles:
 [#1138]: https://github.com/pragma-org/amaru/pull/1138
 [#1139]: https://github.com/pragma-org/amaru/pull/1139
 [#1143]: https://github.com/pragma-org/amaru/pull/1143
+[#1453]: https://github.com/pragma-org/amaru/issues/1453

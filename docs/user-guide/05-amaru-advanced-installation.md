@@ -54,10 +54,10 @@ Please refer to #Monitoring section to learn how to retrieve logs and metrics wh
 
 ```bash title="/etc/default/amaru"
 AMARU_NETWORK=mainnet
-AMARU_CHAIN_DIR=/var/lib/amaru/chain.mainnet.db
-AMARU_LEDGER_DIR=/var/lib/amaru/ledger.mainnet.db
-AMARU_MIGRATE_CHAIN_DB=true
-AMARU_PID_FILE=/run/amaru/amaru.pid
+AMARU_DB_CHAIN=/var/lib/amaru/chain.mainnet.db
+AMARU_DB_LEDGER=/var/lib/amaru/ledger.mainnet.db
+AMARU_DB_CHAIN_AUTOMATIC_MIGRATION=true
+AMARU_PID_EXPORT=/run/amaru/amaru.pid
 AMARU_WITH_JSON_TRACES=true
 ```
 
@@ -114,9 +114,9 @@ Every `amaru node run` [flag](01-amaru-fast-forward.md#4-running-the-node) has a
 
 ```bash title="/etc/default/amaru"
 [...]
-AMARU_PEER_ADDRESS=my-own-peer.example.com:3001
-AMARU_LISTEN_ADDRESS=0.0.0.0:3001
-AMARU_UPSTREAM_PEERS=10
+AMARU_PEER=my-own-peer.example.com:3001
+AMARU_PEERS_LISTEN_ON=0.0.0.0:3001
+AMARU_PEERS_MAX_UPSTREAM=10
 AMARU_WITH_OPEN_TELEMETRY=true
 OTEL_METRIC_EXPORT_INTERVAL=1000
 ```
@@ -135,45 +135,52 @@ You can get the full config list with the TUI under the config menu (press `ESC`
 ```bash
 ┌─ [ AMARU ] [ CARDANO ] [ CONFIG ] ─────────────────────────────────────────────────────────────────────────────────  COPY MODE  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │┌─ Essential ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐┌─ Protocol Parameters · Network ─────────────────────────────────────────────────────────────┐│
-││Option                       Env                                    Value                                                                       ││Parameter                    Value                                                           ││
-││--network                    AMARU_NETWORK                          mainnet                                                                     ││max block body size          90112                                                           ││
-││--chain-dir                  AMARU_CHAIN_DIR                        ./chain.mainnet.db                                                          ││max transaction size         16384                                                           ││
-││--migrate-chain-db           AMARU_MIGRATE_CHAIN_DB                 false                                                                       ││max block header size        1100                                                            ││
-││--ledger-dir                 AMARU_LEDGER_DIR                       ./ledger.mainnet.db                                                         ││max tx ex units              {mem=16500000, cpu=10000000000}                                 ││
-││--listen-address             AMARU_LISTEN_ADDRESS                   0.0.0.0:3000                                                                ││max block ex units           {mem=72000000, cpu=20000000000}                                 ││
-││--submit-api-address         AMARU_SUBMIT_API_ADDRESS               disabled                                                                    ││max value size               5000                                                            ││
-││--peer-address               AMARU_PEER_ADDRESS                     backbone.cardano.iog.io:3001                                                ││max collateral inputs        3                                                               ││
-││--peer-snapshot              AMARU_PEER_SNAPSHOT                    none                                                                        │└─────────────────────────────────────────────────────────────────────────────────────────────┘│
+││Option    Env           Value                                                                                                                   ││Parameter             Value                                                                  ││
+││--network AMARU_NETWORK mainnet                                                                                                                 ││max block body size   90112                                                                  ││
+│└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘│max transaction size  16384                                                                  ││
+│┌─ Storage options ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐│max block header size 1100                                                                   ││
+││Option                          Env                                 Value                                                                       ││max tx ex units       {mem=16500000, cpu=10000000000}                                        ││
+││--db-chain                      AMARU_DB_CHAIN                      ./chain.mainnet.db                                                          ││max block ex units    {mem=72000000, cpu=20000000000}                                        ││
+││--db-chain-automatic-migration  AMARU_DB_CHAIN_AUTOMATIC_MIGRATION  false                                                                       ││max value size        5000                                                                   ││
+││--db-ledger                     AMARU_DB_LEDGER                     ./ledger.mainnet.db                                                         ││max collateral inputs 3                                                                      ││
+││--db-ledger-max-extra-snapshots AMARU_DB_LEDGER_MAX_EXTRA_SNAPSHOTS 0                                                                           │└─────────────────────────────────────────────────────────────────────────────────────────────┘│
 │└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘┌─ Protocol Parameters · Economic ────────────────────────────────────────────────────────────┐│
-│┌─ TUI ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐│Parameter                    Value                                                           ││
-││Option                       Env                                    Value                                                                       ││min fee a                    44                                                              ││
-││--no-tui                     AMARU_NO_TUI                           false                                                                       ││min fee b                    155381                                                          ││
-│└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘│stake credential deposit     2000000                                                         ││
-│┌─ Advanced Options ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐│stake pool deposit           500000000                                                       ││
-││Option                       Env                                    Value                                                                       ││monetary expansion           3/1000                                                          ││
-││--upstream-peers             AMARU_UPSTREAM_PEERS                   3                                                                           ││treasury expansion           2/10                                                            ││
-││--downstream-peers           AMARU_DOWNSTREAM_PEERS                 10                                                                          ││min pool cost                170000000                                                       ││
-││--max-extra-ledger-snapshots AMARU_MAX_EXTRA_LEDGER_SNAPSHOTS       0                                                                           ││lovelace per UTxO byte       4310                                                            ││
-││--peer-removal-cooldown-secs AMARU_PEER_REMOVAL_COOLDOWN_SECS       600                                                                         ││prices                       {mem=577/10000, cpu=721/10000000}                               ││
-││--peer-mix                   AMARU_PEER_MIX                         static!2@15m, shared~6, snapshot~3@1h, ledger~3@24h                         ││collateral percentage        150                                                             ││
-││--pid-file                   AMARU_PID_FILE                         disabled                                                                    ││ref script fee per byte      15/1                                                            ││
-││--trace-buffer               AMARU_TRACE_BUFFER                     disabled                                                                    ││max ref script size per tx   204800                                                          ││
-││--dump-trace-buffer          AMARU_DUMP_TRACE_BUFFER                disabled                                                                    ││max ref script size per bloc 1048576                                                         ││
-│└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘│ref script stride            25600                                                           ││
-│┌─ Network Global Parameters Overrides ──────────────────────────────────────────────────────────────────────────────────────────────────────────┐│ref script multiplier        12/10                                                           ││
-││Option                       Env                                    Value                                                                       │└─────────────────────────────────────────────────────────────────────────────────────────────┘│
-││--era-history                AMARU_ERA_HISTORY                      mainnet                                                                     │┌─ Protocol Parameters · Governance ──────────────────────────────────────────────────────────┐│
-││--consensus-security-param   AMARU_GLOBAL_CONSENSUS_SECURITY_PARAM  2160                                                                        ││Parameter                    Value                                                           ││
-││--epoch-length-scale-factor  AMARU_GLOBAL_EPOCH_LENGTH_SCALE_FACTOR 10                                                                          ││pool max retirement epoch    18                                                              ││
-││--active-slot-coeff-inverse  AMARU_GLOBAL_ACTIVE_SLOT_COEFF_INVERSE 20                                                                          ││optimal stake pools          500                                                             ││
-││--max-lovelace-supply        AMARU_GLOBAL_MAX_LOVELACE_SUPPLY       45000000000000000                                                           ││pledge influence             3/10                                                            ││
-││--slots-per-kes-period       AMARU_GLOBAL_SLOTS_PER_KES_PERIOD      129600                                                                      ││min committee size           7                                                               ││
-││--max-kes-evolution          AMARU_GLOBAL_MAX_KES_EVOLUTION         62                                                                          ││max committee term length    146                                                             ││
-││--system-start               AMARU_GLOBAL_SYSTEM_START              1506203091000                                                               ││gov action lifetime          6                                                               ││
-│└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘│gov action deposit           100000000000                                                    ││
-│                                                                                                                                                  │drep deposit                 500000000                                                       ││
-│                                                                                                                                                  │drep expiry                  20                                                              ││
-│                                                                                                                                                  └─────────────────────────────────────────────────────────────────────────────────────────────┘│
+│┌─ Peers options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐│Parameter                     Value                                                          ││
+││Option                   Env                          Value                                                                                     ││min fee a                     44                                                             ││
+││--peer                   AMARU_PEER                                                                                                             ││min fee b                     155381                                                         ││
+││--peers-listen-on        AMARU_PEERS_LISTEN_ON        0.0.0.0:3000                                                                              ││stake credential deposit      2000000                                                        ││
+││--peers-max-downstream   AMARU_PEERS_MAX_DOWNSTREAM   10                                                                                        ││stake pool deposit            500000000                                                      ││
+││--peers-max-upstream     AMARU_PEERS_MAX_UPSTREAM     3                                                                                         ││monetary expansion            3/1000                                                         ││
+││--peers-removal-cooldown AMARU_PEERS_REMOVAL_COOLDOWN 10min                                                                                     ││treasury expansion            1/5                                                            ││
+││--peers-snapshot         AMARU_PEERS_SNAPSHOT         embedded (16f0489218fe4c4605b24f28a9d5489f1ab808f2)                                       ││min pool cost                 170000000                                                      ││
+││--peers-mix              AMARU_PEERS_MIX              static!2@15m, inbound~6, shared~6, snapshot~3@1h, ledger~3@24h                            ││lovelace per UTxO byte        4310                                                           ││
+│└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘│prices                        {mem=577/10000, cpu=721/10000000}                              ││
+│┌─ TUI options ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐│collateral percentage         150                                                            ││
+││Option              Env                     Value                                                                                               ││ref script fee per byte       15/1                                                           ││
+││--tui-off           AMARU_TUI_OFF           false                                                                                               ││max ref script size per tx    204800                                                         ││
+││--tui-log-retention AMARU_TUI_LOG_RETENTION 104857600 B                                                                                         ││max ref script size per block 1048576                                                        ││
+│└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘│ref script stride             25600                                                          ││
+│┌─ Advanced options ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐│ref script multiplier         6/5                                                            ││
+││Option                 Env                        Value                                                                                         │└─────────────────────────────────────────────────────────────────────────────────────────────┘│
+││--submit-api-listen-on AMARU_SUBMIT_API_LISTEN_ON disabled                                                                                      │┌─ Protocol Parameters · Governance ──────────────────────────────────────────────────────────┐│
+││--pid-export           AMARU_PID_EXPORT           disabled                                                                                      ││Parameter                 Value                                                              ││
+││--trace-buffer         AMARU_TRACE_BUFFER         disabled                                                                                      ││pool max retirement epoch 18                                                                 ││
+││--trace-buffer-dump    AMARU_TRACE_BUFFER_DUMP    disabled                                                                                      ││optimal stake pools       500                                                                ││
+│└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘│pledge influence          3/10                                                               ││
+│┌─ Network global parameters overrides (for custom devnets) ─────────────────────────────────────────────────────────────────────────────────────┐│min committee size        7                                                                  ││
+││Option        Env               Value                                                                                                           ││max committee term length 146                                                                ││
+││--era-history AMARU_ERA_HISTORY mainnet                                                                                                         ││gov action lifetime       6                                                                  ││
+│└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘│gov action deposit        100000000000                                                       ││
+│┌─ Network global parameters ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐│drep deposit              500000000                                                          ││
+││Option                      Env                                    Value                                                                        ││drep expiry               20                                                                 ││
+││--consensus-security-param  AMARU_GLOBAL_CONSENSUS_SECURITY_PARAM  2160                                                                         │└─────────────────────────────────────────────────────────────────────────────────────────────┘│
+││--epoch-length-scale-factor AMARU_GLOBAL_EPOCH_LENGTH_SCALE_FACTOR 10                                                                           │                                                                                               │
+││--active-slot-coeff-inverse AMARU_GLOBAL_ACTIVE_SLOT_COEFF_INVERSE 20                                                                           │                                                                                               │
+││--max-lovelace-supply       AMARU_GLOBAL_MAX_LOVELACE_SUPPLY       45000000000000000                                                            │                                                                                               │
+││--slots-per-kes-period      AMARU_GLOBAL_SLOTS_PER_KES_PERIOD      129600                                                                       │                                                                                               │
+││--max-kes-evolution         AMARU_GLOBAL_MAX_KES_EVOLUTION         62                                                                           │                                                                                               │
+││--system-start              AMARU_GLOBAL_SYSTEM_START              1506203091000                                                                │                                                                                               │
+│└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘                                                                                               │
 │                                                                                                                                                                                                                                                 │
 └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── <esc> NORMAL MODE ─┘
 ```
@@ -310,7 +317,7 @@ cardano_node_metrics_slotInEpoch_int  153412
 
 ### Submitting a transaction
 
-Start the node with `--submit-api-address` or `AMARU_SUBMIT_API_ADDRESS`, then `POST` the CBOR-encoded transaction:
+Start the node with `--submit-api-listen-on` or `AMARU_SUBMIT_API_LISTEN_ON`, then `POST` the CBOR-encoded transaction:
 
 ```bash
 curl -X POST \
@@ -333,11 +340,10 @@ run `systemctl restart amaru.service` afterwards.
 - **Homebrew / Nix** — `brew upgrade amaru` / re-run the `nix profile install` command with the new ref.
 
 :::note
-The packaged systemd service sets `AMARU_MIGRATE_CHAIN_DB=true` (`/etc/default/amaru`) so Amaru migrates the on-disk chain database schema forward automatically on upgrade rather than requiring a manual wipe and re-bootstrap.
-Best practice is to back up `--chain-dir`/`--ledger-dir` before upgrading across a version that mentions ledger or chain database format changes in its release notes, so you can roll back if needed.
+The packaged systemd service sets `AMARU_DB_CHAIN_AUTOMATIC_MIGRATION=true` (`/etc/default/amaru`) so Amaru migrates the on-disk chain database schema forward automatically on upgrade rather than requiring a manual wipe and re-bootstrap.
+Best practice is to back up `--db-chain`/`--db-ledger` before upgrading across a version that mentions ledger or chain database format changes in its release notes, so you can roll back if needed.
 :::
 
 :::warning
-When using the CLI directly, `AMARU_MIGRATE_CHAIN_DB` defaults to `false`, so if a db migration is needed, Amaru won't start and will ask to use `--migrate-chain-db` in order to perform the upgrade.
+When using the CLI directly, `AMARU_DB_CHAIN_AUTOMATIC_MIGRATION` defaults to `false`, so if a db migration is needed, Amaru won't start and will ask to use `--db-chain-automatic-migration` in order to perform the upgrade.
 :::
-

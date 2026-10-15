@@ -14,7 +14,7 @@
 
 use std::array::TryFromSliceError;
 
-use super::{ExBudget, value::Value};
+use super::{ExBudget, MachineVersion, value::Value};
 use crate::{
     binder::Eval,
     bls::BlsError,
@@ -57,6 +57,8 @@ where
     MaxConstrTagExceeded(&'a Value<'a, V>),
     #[error("No cost found for builtin function: {0:?}")]
     NoCostForBuiltin(DefaultFunction),
+    #[error("Program version {}.{}.{} is not available", .0.major, .0.minor, .0.patch)]
+    UnavailableProgramVersion(MachineVersion),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -83,10 +85,14 @@ pub enum RuntimeError<'a> {
     UnexpectedEd25519SignatureLength(TryFromSliceError),
     #[error("Division by zero")]
     DivisionByZero(&'a Integer, &'a Integer),
+    #[error("Integer out of bounds")]
+    IntegerOutOfBounds(&'a Integer),
     #[error("MkCons type mismatch")]
     MkConsTypeMismatch(&'a Constant<'a>),
     #[error("Byte string cons not a byte")]
     ByteStringConsNotAByte(&'a Integer),
+    #[error("constrData: tag {0} is not within the bounds of a Word64")]
+    ConstrTagOutOfBounds(&'a Integer),
     #[error(transparent)]
     Secp256k1(#[from] secp256k1::Error),
     #[error(transparent)]
@@ -109,6 +115,8 @@ pub enum RuntimeError<'a> {
     ReadBitOutOfBounds(&'a Integer, usize),
     #[error("writeBits: an index is out of bounds\n        Index {0}\n         Size {1}")]
     WriteBitsOutOfBounds(&'a Integer, usize),
+    #[error("writeBits: input too long\n       Length {0}\n      Maximum {1}")]
+    WriteBitsInputTooLong(usize, usize),
     #[error("{0} is not within the bounds of a Byte")]
     OutsideByteBounds(&'a Integer),
     #[error("{0} is not within the bounds of usize")]
@@ -187,8 +195,16 @@ where
         MachineError::runtime(RuntimeError::DivisionByZero(numerator, denominator))
     }
 
+    pub fn integer_out_of_bounds(integer: &'a Integer) -> Self {
+        MachineError::runtime(RuntimeError::IntegerOutOfBounds(integer))
+    }
+
     pub fn byte_string_cons_not_a_byte(byte: &'a Integer) -> Self {
         MachineError::runtime(RuntimeError::ByteStringConsNotAByte(byte))
+    }
+
+    pub fn constr_tag_out_of_bounds(tag: &'a Integer) -> Self {
+        MachineError::runtime(RuntimeError::ConstrTagOutOfBounds(tag))
     }
 
     pub fn secp256k1(error: secp256k1::Error) -> Self {
@@ -233,6 +249,10 @@ where
 
     pub fn write_bits_out_of_bounds(index: &'a Integer, size: usize) -> Self {
         MachineError::runtime(RuntimeError::WriteBitsOutOfBounds(index, size))
+    }
+
+    pub fn write_bits_input_too_long(length: usize, maximum: usize) -> Self {
+        MachineError::runtime(RuntimeError::WriteBitsInputTooLong(length, maximum))
     }
 
     pub fn outside_byte_bounds(integer: &'a Integer) -> Self {

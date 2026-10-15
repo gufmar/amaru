@@ -409,7 +409,7 @@ impl ProposalsForest {
         //
         // This is NOT confusing at all. <insert sobbing emoji>.
         if let ProposalEnum::ConstitutionalCommittee(ChangeMembers { added, .. }, _) = proposal {
-            let max_term_length = protocol_parameters.max_committee_term_length;
+            let max_term_length = u64::from(protocol_parameters.max_committee_term_length);
             let is_now_invalid = |valid_until| valid_until > &(self.current_epoch + 1 + max_term_length);
             if added.values().any(is_now_invalid) {
                 let invalid_members =
@@ -742,12 +742,10 @@ mod tests {
     };
 
     use amaru_kernel::{
-        Anchor, ConstitutionalCommitteeUpdate, Credential, Epoch, GovernanceAction, Hash, KeyValuePairs, Lovelace,
-        MaxString128, Network, OrphanProposal, PREPROD_DEFAULT_PROTOCOL_PARAMETERS, PROTOCOL_VERSION_10, Proposal,
-        ProposalEnum, ProposalId, ProposalPointer, ProposalsRootsRc, ProtocolParameters, RatificationStatus,
-        RationalNumber, RewardAccount, Slot, TransactionPointer, any_constitution, any_constitutional_committee_update,
-        any_gov_action, any_proposal_enum, any_proposal_id, any_proposal_pointer, any_protocol_params_update,
-        any_protocol_version, any_reward_account,
+        Anchor, Constitution, ConstitutionalCommitteeUpdate, Credential, Epoch, GovernanceAction, Hash, KeyValuePairs,
+        Lovelace, MaxString128, Network, OrphanProposal, PREPROD_DEFAULT_PROTOCOL_PARAMETERS, PROTOCOL_VERSION_10,
+        Proposal, ProposalEnum, ProposalId, ProposalPointer, ProposalsRootsRc, ProtocolParamUpdate, ProtocolParameters,
+        ProtocolVersion, RatificationStatus, RewardAccount, Slot, TransactionPointer, UnitRationalNumber,
         utils::tests::{assert_strategy_sometimes_fails, assert_strategy_sometimes_panics},
     };
     use proptest::{collection, prelude::*, test_runner::RngSeed};
@@ -761,7 +759,7 @@ mod tests {
     const MAX_TREE_SIZE: usize = 8;
 
     static PROTOCOL_PARAMETERS: LazyLock<ProtocolParameters> = LazyLock::new(|| ProtocolParameters {
-        max_committee_term_length: (MAX_ARBITRARY_EPOCH - MIN_ARBITRARY_EPOCH) / 2,
+        max_committee_term_length: ((MAX_ARBITRARY_EPOCH - MIN_ARBITRARY_EPOCH) / 2) as u32,
         ..(*PREPROD_DEFAULT_PROTOCOL_PARAMETERS).clone()
     });
 
@@ -873,7 +871,7 @@ mod tests {
                     None,
                     vec![],
                     KeyValuePairs::default(),
-                    RationalNumber { numerator: 0, denominator: 1 },
+                    UnitRationalNumber::new(0, 1).unwrap(),
                 ),
             )
             .unwrap();
@@ -907,9 +905,9 @@ mod tests {
         #[test]
         fn prop_insert_increase_sizes_by_one(
             DebugAsDisplay(mut forest) in any_proposals_forest(),
-            id in any_proposal_id(),
-            mut action in any_gov_action(),
-            pointer in any_proposal_pointer(u64::MAX),
+            id in any::<ProposalId>(),
+            mut action in any::<GovernanceAction>(),
+            pointer in any::<ProposalPointer>(),
             parent in any::<u8>()
         ) {
             let size_before = check_invariants(&forest);
@@ -1052,7 +1050,7 @@ mod tests {
                             prop_assert!(
                                 added
                                     .values()
-                                    .all(|valid_until| *valid_until <= forest.current_epoch + 1 + PROTOCOL_PARAMETERS.max_committee_term_length)
+                                    .all(|valid_until| *valid_until <= forest.current_epoch + 1 + u64::from(PROTOCOL_PARAMETERS.max_committee_term_length))
                             );
                         }
                     },
@@ -1101,8 +1099,8 @@ mod tests {
         #[test]
         fn prop_cannot_enact_unknown_proposal(
             DebugAsDisplay(mut forest) in any_proposals_forest(),
-            proposal_id in any_proposal_id(),
-            proposal in any_proposal_enum(),
+            proposal_id in any::<ProposalId>(),
+            proposal in any::<ProposalEnum>(),
         ) {
             prop_assert!(forest.enact(Rc::new(proposal_id), &proposal).is_err());
         }
@@ -1111,7 +1109,7 @@ mod tests {
     #[test]
     fn prop_cannot_insert_root() {
         assert_strategy_sometimes_panics(
-            (any_grown_proposals_forest(), any_gov_action(), any_proposal_pointer(u64::MAX)),
+            (any_grown_proposals_forest(), any::<GovernanceAction>(), any::<ProposalPointer>()),
             ProptestConfig { rng_seed: RngSeed::Fixed(42), ..ProptestConfig::default() },
             |((DebugAsDisplay(mut forest), root), action, proposed_in)| {
                 let _ = forest.insert(&ERA_HISTORY, Rc::new(root), forest.current_epoch + 1, proposed_in, action);
@@ -1202,29 +1200,32 @@ mod tests {
 
     // Generate a *somewhat meaningful* proposal forest, with relationships and links between
     // proposals.
+    #[expect(clippy::expect_used)]
     fn any_proposals_forest() -> impl Strategy<Value = DebugAsDisplay<ProposalsForest>> {
-        let any_ids = collection::btree_set(any_proposal_id().prop_map(Rc::new), 5 * (MAX_TREE_SIZE + 2))
+        let any_ids = collection::btree_set(any::<ProposalId>().prop_map(Rc::new), 5 * (MAX_TREE_SIZE + 2))
             .prop_map(|ids| ids.into_iter().collect::<Vec<_>>());
 
         any_ids.prop_flat_map(|ids: Vec<Rc<ProposalId>>| {
             let (lo, hi) = (0, MAX_TREE_SIZE + 1);
             let any_protocol_parameters_tree =
-                any_proposals_tree(ids[lo..hi].into(), any_protocol_params_update(), |parent, update| {
+                any_proposals_tree(ids[lo..hi].into(), any::<ProtocolParamUpdate>(), |parent, update| {
                     GovernanceAction::ParameterChange(parent, Box::new(update), None)
                 });
 
             let (lo, hi) = (hi + 1, hi + MAX_TREE_SIZE + 2);
             let any_hard_fork_tree =
-                any_proposals_tree(ids[lo..hi].into(), any_protocol_version(), GovernanceAction::HardForkInitiation);
+                any_proposals_tree(ids[lo..hi].into(), any::<ProtocolVersion>(), GovernanceAction::HardForkInitiation);
 
             let (lo, hi) = (hi + 1, hi + MAX_TREE_SIZE + 2);
             let any_constitution_tree =
-                any_proposals_tree(ids[lo..hi].into(), any_constitution(), GovernanceAction::NewConstitution);
+                any_proposals_tree(ids[lo..hi].into(), any::<Constitution>(), GovernanceAction::NewConstitution);
 
             let (lo, hi) = (hi + 1, hi + MAX_TREE_SIZE + 2);
             let any_constitutional_committee_tree = any_proposals_tree(
                 ids[lo..hi].into(),
-                any_constitutional_committee_update((MIN_ARBITRARY_EPOCH..MAX_ARBITRARY_EPOCH).prop_map(Epoch::from)),
+                any_with::<ConstitutionalCommitteeUpdate>(Some(
+                    (MIN_ARBITRARY_EPOCH..MAX_ARBITRARY_EPOCH).prop_map(Epoch::from).boxed(),
+                )),
                 |parent, update| match update {
                     ConstitutionalCommitteeUpdate::NoConfidence => GovernanceAction::NoConfidence(parent),
                     ConstitutionalCommitteeUpdate::ChangeMembers { threshold, added, removed } => {
@@ -1233,10 +1234,11 @@ mod tests {
                             removed.into_iter().collect::<Vec<_>>(),
                             KeyValuePairs::from(added.into_iter().collect::<BTreeMap<_, _>>()),
                             #[expect(clippy::unwrap_used)]
-                            RationalNumber {
-                                numerator: threshold.numer().try_into().unwrap(),
-                                denominator: threshold.denom().try_into().unwrap(),
-                            },
+                            UnitRationalNumber::new(
+                                threshold.numer().try_into().unwrap(),
+                                threshold.denom().try_into().unwrap(),
+                            )
+                            .expect("threshold is a valid unit rational number"),
                         )
                     }
                 },
@@ -1245,7 +1247,7 @@ mod tests {
             let (lo, hi) = (hi + 1, hi + MAX_TREE_SIZE + 2);
             let any_orphans = (
                 Just(ids[lo..hi].into()),
-                collection::vec(any_proposal_pointer(u64::MAX), MAX_TREE_SIZE),
+                collection::vec(any::<ProposalPointer>(), MAX_TREE_SIZE),
                 collection::vec(any_orphan_action(), 0..MAX_TREE_SIZE),
             )
                 .prop_map(|(ids, pointers, orphans): (Vec<Rc<ProposalId>>, _, _)| {
@@ -1349,7 +1351,7 @@ mod tests {
         let any_root = prop_oneof![Just(None), Just(Some(0))];
         let any_parents = collection::vec(any::<u8>(), 0..MAX_TREE_SIZE);
         let any_action_args = collection::vec(any_action_arg, MAX_TREE_SIZE);
-        let any_pointers = collection::vec(any_proposal_pointer(u64::MAX), MAX_TREE_SIZE);
+        let any_pointers = collection::vec(any::<ProposalPointer>(), MAX_TREE_SIZE);
 
         (Just(ids), any_root, any_parents, any_pointers, any_action_args).prop_map(
             move |(ids, root, parents, mut pointers, mut args)| {
@@ -1381,12 +1383,12 @@ mod tests {
             1 => Just(GovernanceAction::Information),
             4 =>
                 collection::btree_map(
-                    any_reward_account(),
+                    any::<RewardAccount>(),
                     any::<Lovelace>(),
                     1..3
                 ).prop_map(|kvs|
                     GovernanceAction::TreasuryWithdrawals(
-                        KeyValuePairs::from(kvs),
+                        kvs,
                         None
                     )
                 ),

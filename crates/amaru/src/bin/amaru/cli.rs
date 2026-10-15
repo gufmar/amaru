@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::str::FromStr;
+use std::{env, str::FromStr};
 
 use amaru::{
     lifecycle::Runnable,
     observability::{Color, ObservabilityHints},
+    trace_output::TraceOutputSpec,
 };
 use amaru_kernel::GlobalParameters;
 use amaru_node::telemetry::{OtelSignal, OtelSignals};
@@ -25,11 +26,48 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::cmd;
 
+/// Environment names changed with their corresponding command-line options.
+///
+/// Values in the left column remain accepted until operators have migrated their deployment
+/// configuration. A canonical variable explicitly set by the operator always wins.
+const LEGACY_ENVIRONMENT_VARIABLES: &[(&str, &str)] = &[
+    // (OLD, NEW)
+    ("AMARU_CARDANO_NODE_CONFIG_DIR", amaru::env_vars::CARDANO_NODE_CONFIG),
+    ("AMARU_CHAIN_DIR", amaru::env_vars::DB_CHAIN),
+    ("AMARU_DIST_DIR", amaru::env_vars::DIST),
+    ("AMARU_DOWNSTREAM_PEERS", amaru::env_vars::PEERS_MAX_DOWNSTREAM),
+    ("AMARU_DUMP_TRACE_BUFFER", amaru::env_vars::TRACE_BUFFER_DUMP),
+    ("AMARU_HEADERS_DIR", amaru::env_vars::HEADERS),
+    ("AMARU_INGEST_MAXIMUM_BLOCKS", amaru::env_vars::MITHRIL_MAX_BLOCKS),
+    ("AMARU_INGEST_UNTIL_SLOT", amaru::env_vars::MITHRIL_UNTIL_SLOT),
+    ("AMARU_KES_SIGNING_KEY_FILE", amaru::env_vars::OPERATOR_KES),
+    ("AMARU_LEDGER_DIR", amaru::env_vars::DB_LEDGER),
+    ("AMARU_LISTEN_ADDRESS", amaru::env_vars::PEERS_LISTEN_ON),
+    ("AMARU_MAX_EXTRA_LEDGER_SNAPSHOTS", amaru::env_vars::DB_LEDGER_MAX_EXTRA_SNAPSHOTS),
+    ("AMARU_MIGRATE_CHAIN_DB", amaru::env_vars::DB_CHAIN_AUTOMATIC_MIGRATION),
+    ("AMARU_MITHRIL_SNAPSHOTS_DIR", amaru::env_vars::MITHRIL_SNAPSHOTS),
+    ("AMARU_NO_TUI", amaru::env_vars::TUI_OFF),
+    ("AMARU_OPERATIONAL_CERTIFICATE", amaru::env_vars::OPERATOR_CERT),
+    ("AMARU_PEER_ADDRESS", amaru::env_vars::PEER),
+    ("AMARU_PEER_MIX", amaru::env_vars::PEERS_MIX),
+    ("AMARU_PEER_REMOVAL_COOLDOWN_SECS", amaru::env_vars::PEERS_REMOVAL_COOLDOWN),
+    ("AMARU_PEER_SNAPSHOT", amaru::env_vars::PEERS_SNAPSHOT),
+    ("AMARU_PID_FILE", amaru::env_vars::PID_EXPORT),
+    ("AMARU_SNAPSHOTS_DIR", amaru::env_vars::SNAPSHOTS),
+    ("AMARU_SUBMIT_API_ADDRESS", amaru::env_vars::SUBMIT_API_LISTEN_ON),
+    ("AMARU_UPSTREAM_PEERS", amaru::env_vars::PEERS_MAX_UPSTREAM),
+    ("AMARU_VRF_SIGNING_KEY_FILE", amaru::env_vars::OPERATOR_VRF),
+];
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// Manage and operate the Amaru node.
     #[command(subcommand)]
     Node(cmd::node::NodeCommand),
+
+    /// Generate KES signing keys.
+    #[command(subcommand)]
+    Keys(cmd::keys::KeysCommand),
 
     /// Probe remote peers (handshake, tip, peer-share, observability).
     #[command(subcommand)]
@@ -50,41 +88,6 @@ pub(crate) enum Command {
 
     #[command(name = "shell-completions", hide = true)]
     ShellCompletions(cmd::shell_completions::Args),
-
-    // Hidden backward-compatibility aliases for old top-level commands.
-    #[command(hide = true, name = "run")]
-    LegacyRun(cmd::node::run::Args),
-
-    #[command(hide = true, name = "daemon")]
-    LegacyDaemon(cmd::node::run::Args),
-
-    #[command(hide = true, name = "bootstrap")]
-    LegacyBootstrap(cmd::node::bootstrap::Args),
-
-    /// Legacy alias for `amaru node rollback --epoch` (positional epoch for compatibility).
-    #[command(hide = true, name = "reset-to-epoch")]
-    LegacyResetToEpoch(cmd::dev::ledger::reset::Args),
-
-    #[command(hide = true, name = "create-snapshots")]
-    LegacyCreateSnapshots(cmd::snapshot::create::Args),
-
-    #[command(hide = true, name = "dump-chain-db")]
-    LegacyDumpChainDB(cmd::dev::chain::dump::Args),
-
-    #[command(hide = true, name = "remove-validation-status")]
-    LegacyRemoveValidationStatus(cmd::dev::chain::clear_invalid::Args),
-
-    #[command(hide = true, name = "fetch-chain-headers")]
-    LegacyFetchChainHeaders(cmd::dev::chain::fetch::Args),
-
-    #[command(hide = true, name = "migrate-chain-db")]
-    LegacyMigrateChainDB(cmd::dev::chain::migrate::Args),
-
-    #[command(hide = true, name = "remove-chain")]
-    LegacyRemoveChain(cmd::dev::chain::remove::Args),
-
-    #[command(hide = true, name = "dump-traces-schema")]
-    LegacyDumpTracesSchema(cmd::dev::traces::dump::Args),
 }
 
 impl Command {
@@ -95,25 +98,13 @@ impl Command {
     pub(crate) fn into_runnable(self) -> Runnable {
         match self {
             Command::Node(cmd) => cmd.into_runnable(),
+            Command::Keys(cmd) => cmd.into_runnable(),
             Command::Peer(cmd) => cmd.into_runnable(),
             Command::Snapshot(cmd) => cmd.into_runnable(),
             #[cfg(feature = "mithril")]
             Command::Mithril(cmd) => cmd.into_runnable(),
             Command::Dev(cmd) => cmd.into_runnable(),
             Command::ShellCompletions(args) => cmd::shell_completions::runnable(args),
-            // Legacy top-level aliases: same behaviour as their modern counterparts.
-            Command::LegacyRun(args) | Command::LegacyDaemon(args) => cmd::node::run::runnable(args),
-            Command::LegacyBootstrap(args) => cmd::node::bootstrap::runnable(args),
-            Command::LegacyResetToEpoch(args) => {
-                cmd::node::rollback::runnable_epoch(args.network, args.epoch, args.ledger_dir, None)
-            }
-            Command::LegacyCreateSnapshots(args) => cmd::snapshot::create::runnable(args),
-            Command::LegacyDumpChainDB(args) => cmd::dev::chain::dump::runnable(args),
-            Command::LegacyRemoveValidationStatus(args) => cmd::dev::chain::clear_invalid::runnable(args),
-            Command::LegacyFetchChainHeaders(args) => cmd::dev::chain::fetch::runnable(args),
-            Command::LegacyMigrateChainDB(args) => cmd::dev::chain::migrate::runnable(args),
-            Command::LegacyRemoveChain(args) => cmd::dev::chain::remove::runnable(args),
-            Command::LegacyDumpTracesSchema(args) => cmd::dev::traces::dump::runnable(args),
         }
     }
 
@@ -128,14 +119,6 @@ impl Command {
                 GlobalParameters::show_help()?;
                 Ok(true)
             }
-            Command::LegacyRun(args) | Command::LegacyDaemon(args) if args.help_global_parameters => {
-                GlobalParameters::show_help()?;
-                Ok(true)
-            }
-            Command::LegacyBootstrap(args) if args.help_global_parameters => {
-                GlobalParameters::show_help()?;
-                Ok(true)
-            }
             _ => Ok(false),
         }
     }
@@ -145,9 +128,9 @@ impl Command {
             self,
             Command::Peer(_)
                 | Command::Dev(cmd::dev::DevCommand::Env(_))
+                | Command::Snapshot(cmd::snapshot::SnapshotCommand::Epochs(_))
                 | Command::Dev(cmd::dev::DevCommand::Traces(cmd::dev::traces::TracesCommand::Dump(_)))
                 | Command::Dev(cmd::dev::DevCommand::Traces(cmd::dev::traces::TracesCommand::Schema(_)))
-                | Command::LegacyDumpTracesSchema(_)
                 | Command::ShellCompletions(_)
         )
     }
@@ -155,9 +138,7 @@ impl Command {
     #[allow(clippy::wildcard_enum_match_arm)]
     pub(crate) fn tui_settings(&self) -> Option<tui::Settings> {
         match self {
-            Command::Node(cmd::node::NodeCommand::Run(args))
-            | Command::LegacyRun(args)
-            | Command::LegacyDaemon(args) => Some(args.tui_settings()),
+            Command::Node(cmd::node::NodeCommand::Run(args)) => Some(args.tui_settings()),
             _ => None,
         }
     }
@@ -167,8 +148,7 @@ impl ObservabilityHints for Command {
     fn listen_address(&self) -> Option<&str> {
         #[allow(clippy::wildcard_enum_match_arm)]
         match self {
-            Command::Node(cmd::node::NodeCommand::Run(args)) => Some(args.listen_address()),
-            Command::LegacyRun(args) | Command::LegacyDaemon(args) => Some(args.listen_address()),
+            Command::Node(cmd::node::NodeCommand::Run(args)) => Some(args.peers_listen_on()),
             _ => None,
         }
     }
@@ -221,6 +201,17 @@ pub(crate) struct Cli {
     #[clap(long, global = true, action, env = "AMARU_WITH_JSON_TRACES")]
     pub(crate) with_json_traces: bool,
 
+    /// Also write traces to a file. Repeat for one file per occurrence.
+    ///
+    /// The value is `PATH:FILTER`, split at the first colon so a filter may contain `::`.
+    /// `FILTER` uses the same directives as `AMARU_LOG`. A path ending in `.ndjson` uses the
+    /// same JSON format as `--with-json-traces`, one object per line; any other path is text.
+    /// The file is created or truncated.
+    /// Span close lines include busy and idle time. This does not replace the terminal, the
+    /// TUI, or OpenTelemetry.
+    #[clap(long, global = true, env = "AMARU_LOG_OUTPUT", action = clap::ArgAction::Append, value_name = "PATH:FILTER")]
+    pub(crate) log_output: Vec<TraceOutputSpec>,
+
     /// Export OpenTelemetry signals via OTLP; without a value, export all signals.
     #[clap(
         long = "with-open-telemetry",
@@ -239,6 +230,8 @@ pub(crate) fn command(version: &'static str) -> clap::Command {
 }
 
 pub(crate) fn parse(version: &'static str) -> Result<Cli, clap::Error> {
+    remap_legacy_environment_variables();
+
     let matches = <Cli as CommandFactory>::command()
         // NOTE: Hiding GlobalParameters options at 'runtime'
         //
@@ -248,14 +241,25 @@ pub(crate) fn parse(version: &'static str) -> Result<Cli, clap::Error> {
             cmd.mut_subcommand("run", GlobalParameters::hide_options)
                 .mut_subcommand("bootstrap", GlobalParameters::hide_options)
         })
-        // Also hide on legacy top-level aliases
-        .mut_subcommand("run", GlobalParameters::hide_options)
-        .mut_subcommand("daemon", GlobalParameters::hide_options)
-        .mut_subcommand("bootstrap", GlobalParameters::hide_options)
         .version(version)
         .get_matches();
 
     let cli = <Cli as FromArgMatches>::from_arg_matches(&matches)?;
 
     Ok(cli)
+}
+
+fn remap_legacy_environment_variables() {
+    for &(legacy, canonical) in LEGACY_ENVIRONMENT_VARIABLES {
+        if env::var_os(canonical).is_some() {
+            continue;
+        }
+
+        let Some(value) = env::var_os(legacy) else {
+            continue;
+        };
+
+        // SAFETY: command-line parsing happens in `main` before Amaru starts runtime threads.
+        unsafe { env::set_var(canonical, value) };
+    }
 }

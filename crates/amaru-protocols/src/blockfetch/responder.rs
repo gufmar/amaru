@@ -23,6 +23,7 @@ use std::time::Duration;
 use amaru_kernel::{IsHeader, NetworkPoint, NonEmptyVec, Peer, Point, RawBlock};
 use amaru_metrics::protocol::ServedBlockCountMetrics;
 use amaru_observability::{debug, error};
+use amaru_ouroboros::{ConnectionId, RemoteProtocol};
 use amaru_pure_stage::{
     DeserializerGuards, Effects, StageRef, Void, define_role_tag, make_states, on_receive, typestate::prelude::*,
 };
@@ -31,6 +32,7 @@ use super::{BatchDone, Block, ClientDone, Message, NoBlocks, RequestRange, Start
 use crate::{
     metrics_effects::{Metrics, MetricsOps},
     mux::{Frame, HandlerMessage, MuxMessage, Sent},
+    peer_tracking_effects::PeerTrack,
     protocol::{
         Inputs, Internal, MuxClient, NETWORK_SEND_TIMEOUT, PROTO_N2N_BLOCK_FETCH, Pull, ToMux, WantNext, from_wire,
         ingress_limit,
@@ -171,8 +173,9 @@ where
     type Reply = Sent;
     const TIMEOUT: Duration = NETWORK_SEND_TIMEOUT;
 
-    fn encode(&self, msg: T, reply: StageRef<Sent>) -> MuxMessage {
-        self.encode_send(Message::from(msg), reply)
+    fn into_call(self, msg: T) -> (Duration, impl FnOnce(StageRef<Sent>) -> MuxMessage + std::marker::Send + 'static) {
+        let message = Message::from(msg);
+        (NETWORK_SEND_TIMEOUT, move |reply| self.encode_send(message, reply))
     }
 }
 
@@ -200,11 +203,12 @@ struct Instance {
     proto: Proto,
     mux: MuxClient,
     peer: Peer,
+    conn_id: ConnectionId,
 }
 
 impl Instance {
-    fn new(mux: MuxClient, peer: Peer) -> Self {
-        Self { proto: initial_state::<Idle>().into(), mux, peer }
+    fn new(mux: MuxClient, peer: Peer, conn_id: ConnectionId) -> Self {
+        Self { proto: initial_state::<Idle>().into(), mux, peer, conn_id }
     }
 }
 
@@ -213,7 +217,7 @@ async fn instance(inst: Instance, mail: Mail, eff: Effects<Mail>) -> Instance {
         Inputs::Network(HandlerMessage::Registered(_)) => Inputs::Internal(Internal::Pull),
         mail @ (Inputs::Local(_) | Inputs::Network(HandlerMessage::FromNetwork(_)) | Inputs::Internal(_)) => mail,
     };
-    let Instance { proto, mux, peer } = inst;
+    let Instance { proto, mux, peer, conn_id } = inst;
     let proto = match proto {
         Proto::Idle(idle) => match idle.convert_input(mail) {
             Ok(ServerIdleIn::Pull(pull)) => idle.receive(&pull, eff).send(&mux, WantNext).await.finish().into(),
@@ -238,10 +242,17 @@ async fn instance(inst: Instance, mail: Mail, eff: Effects<Mail>) -> Instance {
                             }
                         }
                         let (_, session) = session.discard_repeat().call(&mux, BatchDone).await;
+                        PeerTrack::new(&metrics_eff)
+                            .note_remote_protocol(peer, conn_id, RemoteProtocol::BlockFetch, true)
+                            .await;
                         session.send(&mux, WantNext).await.finish().into()
                     }
                     Ok(None) => {
+                        let note = eff.clone();
                         let (_, session) = idle.receive(&range, eff).call(&mux, NoBlocks).await;
+                        PeerTrack::new(&note)
+                            .note_remote_protocol(peer, conn_id, RemoteProtocol::BlockFetch, true)
+                            .await;
                         session.send(&mux, WantNext).await.finish().into()
                     }
                     Err(err) => return invalid(peer, idle.name(), err, eff).await,
@@ -249,7 +260,9 @@ async fn instance(inst: Instance, mail: Mail, eff: Effects<Mail>) -> Instance {
             }
             Ok(ServerIdleIn::ClientDone(done)) => {
                 // Remainder dest is spec Done; live token restarts Idle on this mux registration.
+                let note = eff.clone();
                 let _: Done = idle.receive(&done, eff).send(&mux, WantNext).await.finish();
+                PeerTrack::new(&note).note_remote_protocol(peer, conn_id, RemoteProtocol::BlockFetch, false).await;
                 initial_state::<Idle>().into()
             }
             Err(Inputs::Internal(Internal::Timeout)) => idle.into(),
@@ -262,7 +275,7 @@ async fn instance(inst: Instance, mail: Mail, eff: Effects<Mail>) -> Instance {
             }
         },
     };
-    Instance { proto, mux, peer }
+    Instance { proto, mux, peer, conn_id }
 }
 
 async fn invalid(peer: Peer, state: &str, input: impl std::fmt::Debug, eff: Effects<Mail>) -> Instance {
@@ -279,13 +292,14 @@ async fn invalid(peer: Peer, state: &str, input: impl std::fmt::Debug, eff: Effe
 pub async fn register_blockfetch_responder<M: amaru_pure_stage::SendData>(
     muxer: &StageRef<MuxMessage>,
     peer: Peer,
+    conn_id: ConnectionId,
     eff: &Effects<M>,
     tombstone: M,
 ) -> StageRef<Void> {
     let mux = MuxClient::new(muxer.clone(), PROTO_N2N_BLOCK_FETCH.responder().erase());
     let blockfetch = eff.stage("blockfetch-responder", instance).await;
     let blockfetch = eff.supervise(blockfetch, tombstone);
-    let blockfetch = eff.wire_up(blockfetch, Instance::new(mux, peer)).await;
+    let blockfetch = eff.wire_up(blockfetch, Instance::new(mux, peer, conn_id)).await;
     let protocol = PROTO_N2N_BLOCK_FETCH.responder().erase();
     eff.send(
         muxer,
@@ -305,8 +319,8 @@ pub mod tests {
     use std::sync::{Arc, OnceLock};
 
     use amaru_kernel::{
-        BlockHeight, EraHistory, EraName, IsHeader, NetworkPoint, NonEmptyBytes, Slot, any_fake_header,
-        any_headers_chain, any_headers_chain_with_root,
+        BlockHeight, EraHistory, EraName, Header, IsHeader, NetworkPoint, NonEmptyBytes, Slot, any_headers_chain,
+        any_headers_chain_with_root,
         cardano::network_block::{EncodedTestBlock, NetworkBlock, make_encoded_chain},
         cbor,
         utils::tests::run_strategy,
@@ -317,6 +331,7 @@ pub mod tests {
         simulation::{Run, SimulationBuilder, simulation_builder::run_test},
         typestate::{FmtPar, OnReceive, Session},
     };
+    use proptest::prelude::any;
     use tokio::runtime::{Builder, Runtime};
 
     use super::*;
@@ -452,12 +467,12 @@ pub mod tests {
 
     #[test]
     fn test_request_range_no_parent_hash_before_from() {
-        let genesis = NetworkPoint::Specific(Slot::from(10), run_strategy(any_fake_header()).hash());
+        let genesis = NetworkPoint::Specific(Slot::from(10), run_strategy(any::<Header>()).hash());
         let (store, chain) = make_store_with_chain_starting_from(5, genesis);
 
         let result = request_range(
             store,
-            NetworkPoint::Specific(Slot::from(2), run_strategy(any_fake_header()).hash()),
+            NetworkPoint::Specific(Slot::from(2), run_strategy(any::<Header>()).hash()),
             chain[3].header.point(),
         );
         assert_eq!(result, None, "should return None when we hit genesis before finding from");
@@ -473,7 +488,7 @@ pub mod tests {
         // When traversing backwards from 'through', we'll pass the slot of 'from' without finding it,
         // and then hit a block with a slot before 'from', triggering the abort condition.
         let from_slot = chain[2].header.slot();
-        let non_existent_hash = run_strategy(any_fake_header()).hash();
+        let non_existent_hash = run_strategy(any::<Header>()).hash();
         let from = NetworkPoint::Specific(from_slot, non_existent_hash);
 
         let result = request_range(store, from, chain[4].header.point());
@@ -567,6 +582,14 @@ pub mod tests {
         RUNTIME.get_or_init(|| Builder::new_multi_thread().enable_all().build().unwrap()).handle()
     }
 
+    fn install_tracking(network: &mut SimulationBuilder) {
+        use amaru_ouroboros::PeerTrackingResource;
+
+        use crate::peer_tracking::InMemoryPeerTracking;
+
+        network.resources().put::<PeerTrackingResource>(Arc::new(InMemoryPeerTracking::new()));
+    }
+
     fn proto() -> crate::protocol::ProtocolId<crate::protocol::Erased> {
         PROTO_N2N_BLOCK_FETCH.responder().erase()
     }
@@ -580,12 +603,16 @@ pub mod tests {
         let (store, chain) = make_store_with_chain(3);
         store_blocks(store.clone(), &chain);
         let mut network = SimulationBuilder::default();
+        install_tracking(&mut network);
         network.resources().put::<ResourceHeaderStore>(store);
         let mux = network.stage("mux", mux_step);
         let mux_ref = mux.sender();
         let mux = network.wire_up(mux, MuxLog::default());
         let handler_b = network.stage("bf", instance);
-        let handler = network.wire_up(handler_b, Instance::new(MuxClient::new(mux_ref, proto()), Peer::for_test(3001)));
+        let handler = network.wire_up(
+            handler_b,
+            Instance::new(MuxClient::new(mux_ref, proto()), Peer::for_test(3001), ConnectionId::initial()),
+        );
         network
             .preload(
                 &handler,
@@ -610,12 +637,16 @@ pub mod tests {
     fn missing_range_sends_no_blocks() {
         let (store, chain) = make_store_with_chain(3);
         let mut network = SimulationBuilder::default();
+        install_tracking(&mut network);
         network.resources().put::<ResourceHeaderStore>(store);
         let mux = network.stage("mux", mux_step);
         let mux_ref = mux.sender();
         let mux = network.wire_up(mux, MuxLog::default());
         let handler_b = network.stage("bf", instance);
-        let handler = network.wire_up(handler_b, Instance::new(MuxClient::new(mux_ref, proto()), Peer::for_test(3001)));
+        let handler = network.wire_up(
+            handler_b,
+            Instance::new(MuxClient::new(mux_ref, proto()), Peer::for_test(3001), ConnectionId::initial()),
+        );
         network
             .preload(
                 &handler,
@@ -639,11 +670,15 @@ pub mod tests {
     #[test]
     fn close_idle_resets() {
         let mut network = SimulationBuilder::default();
+        install_tracking(&mut network);
         let mux = network.stage("mux", mux_step);
         let mux_ref = mux.sender();
         let mux = network.wire_up(mux, MuxLog::default());
         let handler_b = network.stage("bf", instance);
-        let handler = network.wire_up(handler_b, Instance::new(MuxClient::new(mux_ref, proto()), Peer::for_test(3001)));
+        let handler = network.wire_up(
+            handler_b,
+            Instance::new(MuxClient::new(mux_ref, proto()), Peer::for_test(3001), ConnectionId::initial()),
+        );
         network.preload(&handler, [Inputs::Network(HandlerMessage::Registered(proto())), wire(ClientDone)]).unwrap();
         let mut running = network.run(test_runtime());
         running.run(Run::skip_wakeups()).assert_idle();
@@ -657,11 +692,15 @@ pub mod tests {
     #[test]
     fn start_batch_while_idle_terminates() {
         let mut network = SimulationBuilder::default();
+        install_tracking(&mut network);
         let mux = network.stage("mux", mux_step);
         let mux_ref = mux.sender();
         let _mux = network.wire_up(mux, MuxLog::default());
         let handler_b = network.stage("bf", instance);
-        let handler = network.wire_up(handler_b, Instance::new(MuxClient::new(mux_ref, proto()), Peer::for_test(3001)));
+        let handler = network.wire_up(
+            handler_b,
+            Instance::new(MuxClient::new(mux_ref, proto()), Peer::for_test(3001), ConnectionId::initial()),
+        );
         network.preload(&handler, [Inputs::Network(HandlerMessage::Registered(proto())), wire(StartBatch)]).unwrap();
         let mut running = network.run(test_runtime());
         let blocked = running.run(Run::skip_wakeups());

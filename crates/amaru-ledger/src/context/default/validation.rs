@@ -266,7 +266,8 @@ impl DRepsSlice for DefaultValidationContext {
     }
 
     fn unregister(&mut self, drep: Credential, _refund: Lovelace, pointer: CertificatePointer) {
-        self.state.dreps_deregistrations.insert(drep, pointer);
+        let removal = self.dreps.contains_key(&drep).then_some(pointer);
+        self.state.dreps_deregistrations.insert(drep, removal);
         self.state.dreps.unregister(drep)
     }
 }
@@ -484,10 +485,8 @@ impl BalanceSlice for DefaultValidationContext {
 
 #[cfg(test)]
 mod tests {
-    use amaru_kernel::{
-        Proposal, Slot, TransactionPointer, any_credential, any_proposal, any_proposal_id, any_rational_number,
-        utils::tests::run_strategy,
-    };
+    use amaru_kernel::{Point, Proposal, Slot, TransactionPointer, UnitRationalNumber, utils::tests::run_strategy};
+    use proptest::prelude::any;
     use test_case::test_case;
 
     use super::*;
@@ -537,6 +536,22 @@ mod tests {
         let mut ctx = ctx_with(BTreeMap::from([(cred(1), account(7))]));
         ctx.withdraw_from(cred(1));
         assert_eq!(AccountsSlice::lookup(&ctx, &cred(1)).map(|a| a.rewards), Some(0));
+    }
+
+    #[test]
+    fn register_then_unregister_drep_produces_no_store_changes() {
+        let mut ctx = DefaultValidationContext::default();
+        let drep = cred(1);
+        let registration =
+            DRepRegistration { deposit: 500_000_000, registered_at: pointer(), valid_until: Epoch::from(10) };
+        DRepsSlice::register(&mut ctx, drep, registration, None).unwrap();
+        let deregistration = CertificatePointer { certificate_index: 1, ..pointer() };
+        DRepsSlice::unregister(&mut ctx, drep, registration.deposit, deregistration);
+        assert!(DRepsSlice::lookup(&ctx, &drep).is_none());
+
+        let update = VolatileFragment::from(ctx).anchor(Point::Origin, Hash::new([0; 28])).into_store_update();
+        assert_eq!(update.add.dreps.count(), 0);
+        assert_eq!(update.remove.dreps.count(), 0);
     }
 
     #[test]
@@ -688,9 +703,9 @@ mod tests {
 
     #[test]
     fn proposal_acknowledgement_does_not_modify_committee_state() {
-        let proposal_id = run_strategy(any_proposal_id());
+        let proposal_id = run_strategy(any::<ProposalId>());
 
-        let cold_credential = run_strategy(any_credential());
+        let cold_credential = run_strategy(any::<Credential>());
 
         let committee_update_adding_members = ProposalState {
             proposed_in: Default::default(),
@@ -700,9 +715,9 @@ mod tests {
                     None,
                     Default::default(),
                     vec![(cold_credential, Default::default())].try_into().unwrap(),
-                    run_strategy(any_rational_number()),
+                    run_strategy(any::<UnitRationalNumber>()),
                 ),
-                ..run_strategy(any_proposal())
+                ..run_strategy(any::<Proposal>())
             },
         };
 
