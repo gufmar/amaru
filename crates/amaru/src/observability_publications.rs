@@ -12,41 +12,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Build observability mini-protocol publications from an optional TOML config.
+//! Build observability mini-protocol publications from a compact CLI/env DSL.
 //!
-//! Used when `AMARU_OBSERVABILITY` is set. The config only selects **which** built-in
-//! fields appear in **which** publications. Identity values (node name, versions, git
-//! revision, live samples) always come from the running binary / host — never from the
-//! config file.
+//! Enabled when `--observability` / `AMARU_OBSERVABILITY` is set. The DSL only selects
+//! **which** built-in fields appear in **which** publications. Identity values (node
+//! name, versions, git revision, live samples) always come from the running binary /
+//! host — never from the operator string.
 //!
-//! Unknown field ids, unsupported options, and load/parse problems are **warnings**:
-//! the node keeps running and falls back to the remaining known fields (or the default
-//! all-fields bag). Config must never abort node startup.
+//! Grammar (PEERS_MIX-style):
+//! - CLI: repeat `--observability SPEC` (or bare `--observability` → `open:all`)
+//! - Env: one value; `;` separates publications (`,` separates fields inside a bag)
+//! - `open[:fields]` / `o[:fields]` — open publication (`all` or omit = every field)
+//! - `enc:<64hex>:<fields>` / `e:<64hex>:<fields>` — encrypted (skipped until sealed-box)
+//!
+//! Unknown field ids and parse problems are **warnings**: the node keeps running and
+//! falls back to remaining known fields (or the default all-fields bag). Config must
+//! never abort node startup.
 //!
 //! A background refresher rebuilds a shared cache on each 600-slot window aligned from
 //! slot 0 (`snapshot_slot = floor(tip_slot / 600) * 600`). Observe serves that bag.
 
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::BTreeMap, str::FromStr, sync::Arc, time::Duration};
 
 use amaru_consensus::stages::peer_selection::{PeerConnectionSnapshot, PeerConnectionStats};
 use amaru_observability::warn;
 use amaru_protocols::observability::{
-    ExperimentalValue, MAX_PUBLICATIONS, Message, OpenPayload, PUBLICATION_VERSION, Publication, PublicationsCache,
+    ExperimentalValue, MAX_MESSAGE_BYTES, MAX_PUBLICATIONS, Message, OBSERVER_PUBLIC_KEY_LEN, OpenPayload,
+    PUBLICATION_VERSION, Publication, PublicationsCache,
 };
-use anyhow::{Context, bail};
-use serde::Deserialize;
+use anyhow::bail;
 use tokio::task::JoinHandle;
 
 use crate::version;
-
-/// Default path env for the publications config.
-pub const OBSERVABILITY_CONFIG_ENV: &str = "AMARU_OBSERVABILITY_CONFIG";
 
 /// Snapshot window length in slots (aligned from slot 0).
 pub const SNAPSHOT_SLOT_PERIOD: u64 = 600;
@@ -60,10 +57,9 @@ const NODE_TYPE: &str = "full";
 /// How often the refresher re-reads the chain tip while waiting for the next window.
 const TIP_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Catalogue of built-in fields operators may enable. Values are never taken from config.
+/// Catalogue of built-in fields operators may enable. Values are never taken from the DSL.
 ///
-/// Config `items` strings match the wire identity: CDDL logical ids for standard keys,
-/// and the experimental tstr key (including `amaru.` namespace) for everything else.
+/// Spec strings accept short aliases or the wire/catalogue id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FieldId {
     /// Standard openPayload key 1 (`"amaru"`).
@@ -117,7 +113,7 @@ impl FieldId {
         Self::PeersTargetDownstream,
     ];
 
-    /// Config / catalogue string (same as wire key for experimental fields).
+    /// Canonical catalogue string (same as wire key for experimental fields).
     fn as_str(self) -> &'static str {
         match self {
             Self::NodeName => "node_name",
@@ -144,64 +140,25 @@ impl FromStr for FieldId {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
-            "node_name" => Self::NodeName,
-            "node_version_major" => Self::NodeVersionMajor,
-            "node_version_minor" => Self::NodeVersionMinor,
-            "node_version_patch" => Self::NodeVersionPatch,
-            "node_type" => Self::NodeType,
-            "git_revision" => Self::GitRevision,
-            "amaru.version" => Self::Version,
-            "amaru.cpu_cores" => Self::CpuCores,
-            "amaru.process_rss_bytes" => Self::ProcessRssBytes,
-            "amaru.peers_inbound" => Self::PeersInbound,
-            "amaru.peers_outbound" => Self::PeersOutbound,
-            "amaru.peers_outbound_connecting" => Self::PeersOutboundConnecting,
-            "amaru.peers_using" => Self::PeersUsing,
-            "amaru.peers_target_upstream" => Self::PeersTargetUpstream,
-            "amaru.peers_target_downstream" => Self::PeersTargetDownstream,
+            "name" | "node_name" => Self::NodeName,
+            "maj" | "node_version_major" => Self::NodeVersionMajor,
+            "min" | "node_version_minor" => Self::NodeVersionMinor,
+            "pat" | "node_version_patch" => Self::NodeVersionPatch,
+            "type" | "node_type" => Self::NodeType,
+            "git" | "git_revision" => Self::GitRevision,
+            "ver" | "amaru.version" => Self::Version,
+            "cpu" | "amaru.cpu_cores" => Self::CpuCores,
+            "rss" | "amaru.process_rss_bytes" => Self::ProcessRssBytes,
+            "pin" | "amaru.peers_inbound" => Self::PeersInbound,
+            "pout" | "amaru.peers_outbound" => Self::PeersOutbound,
+            "pconn" | "amaru.peers_outbound_connecting" => Self::PeersOutboundConnecting,
+            "puse" | "amaru.peers_using" => Self::PeersUsing,
+            "ptup" | "amaru.peers_target_upstream" => Self::PeersTargetUpstream,
+            "ptdown" | "amaru.peers_target_downstream" => Self::PeersTargetDownstream,
             other => bail!(
-                "unknown field '{other}'; known fields: {}",
-                FieldId::ALL.iter().map(|f| f.as_str()).collect::<Vec<_>>().join(", ")
+                "unknown field '{other}'; known: name,maj,min,pat,type,git,ver,cpu,rss,pin,pout,pconn,puse,ptup,ptdown,all (or full catalogue ids)"
             ),
         })
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct PublicationsFile {
-    /// One or more publications. Same field ids may appear in several entries.
-    #[serde(default = "default_publications", rename = "publication")]
-    pub publications: Vec<PublicationSection>,
-}
-
-fn default_publications() -> Vec<PublicationSection> {
-    vec![PublicationSection::default_open_all()]
-}
-
-impl Default for PublicationsFile {
-    fn default() -> Self {
-        Self { publications: default_publications() }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct PublicationSection {
-    /// Built-in field ids to include in this publication's openPayload.
-    #[serde(default)]
-    pub items: Vec<String>,
-
-    /// Optional X25519 observer public key (64 hex chars). Reserved for encrypted
-    /// publications; not implemented yet — the section is skipped with a warning if set.
-    #[serde(default)]
-    pub observer_public_key: Option<String>,
-}
-
-impl PublicationSection {
-    fn default_open_all() -> Self {
-        Self {
-            items: FieldId::ALL.iter().map(|f| f.as_str().to_string()).collect(),
-            observer_public_key: None,
-        }
     }
 }
 
@@ -229,13 +186,7 @@ impl NodeIdentity {
     fn from_build() -> Self {
         let version = version::package_version();
         let (major, minor, patch) = parse_semver_parts(version);
-        Self {
-            version,
-            major,
-            minor,
-            patch,
-            git_revision: version::git_commit_hash_short().unwrap_or("unknown"),
-        }
+        Self { version, major, minor, patch, git_revision: version::git_commit_hash_short().unwrap_or("unknown") }
     }
 }
 
@@ -252,27 +203,18 @@ pub fn aligned_snapshot_slot(tip_slot: u64) -> u64 {
     tip_slot.div_euclid(SNAPSHOT_SLOT_PERIOD).saturating_mul(SNAPSHOT_SLOT_PERIOD)
 }
 
-/// Load config (optional path / env), install the shared cache, and return a handle for the refresher.
+/// Flatten clap Append values and env `;`-lists into individual publication specs.
+pub fn flatten_specs(parts: &[String]) -> Vec<String> {
+    parts.iter().flat_map(|part| part.split(';')).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
+}
+
+/// Install the shared cache from operator specs and return a handle for the refresher.
 ///
-/// Never fails the node: unreadable/invalid files and unknown field ids become warnings and
-/// fall back to remaining known fields or the default all-fields publication.
-pub fn install_for_node(config_path: Option<&Path>) -> PublicationsCacheHandle {
-    let path = resolve_config_path(config_path);
-    let file = match path.as_ref() {
-        Some(p) => match load_file(p) {
-            Ok(file) => file,
-            Err(err) => {
-                warn!(
-                    setup::observability::PUBLICATIONS_CONFIG,
-                    reason = "load_failed",
-                    detail = format!("{}: {err:#}", p.display()),
-                );
-                PublicationsFile::default()
-            }
-        },
-        None => PublicationsFile::default(),
-    };
-    let resolved = resolve_config(&file);
+/// Never fails the node: invalid specs become warnings and fall back to remaining known
+/// fields or the default all-fields publication.
+pub fn install_for_node(specs: &[String]) -> PublicationsCacheHandle {
+    let flattened = flatten_specs(specs);
+    let resolved = resolve_specs(&flattened);
     let identity = NodeIdentity::from_build();
     let peer_stats = PeerConnectionStats::new();
     // Before the tip source is available, publish snapshot_slot 0 with current live samples.
@@ -300,21 +242,13 @@ impl PublicationsCacheHandle {
     pub fn refresh_for_tip_slot(&self, tip_slot: u64) -> u64 {
         let snapshot = aligned_snapshot_slot(tip_slot);
         if cached_snapshot_slot(&self.cache.get()) != Some(snapshot) {
-            self.cache.replace(build_message(
-                &self.config,
-                &self.identity,
-                snapshot,
-                &self.peer_stats.snapshot(),
-            ));
+            self.cache.replace(build_message(&self.config, &self.identity, snapshot, &self.peer_stats.snapshot()));
         }
         snapshot
     }
 
     /// Spawn a background task that refreshes the cache on each new 600-slot window.
-    pub fn spawn_refresher(
-        &self,
-        tip_slot: Arc<dyn Fn() -> u64 + Send + Sync>,
-    ) -> JoinHandle<()> {
+    pub fn spawn_refresher(&self, tip_slot: Arc<dyn Fn() -> u64 + Send + Sync>) -> JoinHandle<()> {
         let handle = self.clone();
         tokio::spawn(async move {
             let mut last_snapshot = None;
@@ -343,107 +277,161 @@ fn cached_snapshot_slot(message: &Message) -> Option<u64> {
         }),
         Message::CachedPublications(_) => message.logical_publications().and_then(|pubs| {
             pubs.first().map(|p| match p {
-                Publication::Open { snapshot_slot, .. } | Publication::Encrypted { snapshot_slot, .. } => *snapshot_slot,
+                Publication::Open { snapshot_slot, .. } | Publication::Encrypted { snapshot_slot, .. } => {
+                    *snapshot_slot
+                }
             })
         }),
         Message::GetPublications => None,
     }
 }
 
-fn resolve_config_path(cli: Option<&Path>) -> Option<PathBuf> {
-    if let Some(p) = cli {
-        return Some(p.to_path_buf());
-    }
-    std::env::var_os(OBSERVABILITY_CONFIG_ENV).map(PathBuf::from)
-}
-
-fn load_file(path: &Path) -> anyhow::Result<PublicationsFile> {
-    let raw = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    toml::from_str(&raw).with_context(|| format!("parse TOML {}", path.display()))
-}
-
-fn resolve_config(file: &PublicationsFile) -> ResolvedConfig {
-    let mut sections = file.publications.as_slice();
+fn resolve_specs(specs: &[String]) -> ResolvedConfig {
+    let mut sections = specs;
+    let truncated: Vec<String>;
     if sections.len() > MAX_PUBLICATIONS {
         warn!(
             setup::observability::PUBLICATIONS_CONFIG,
             reason = "too_many_publications",
-            detail = format!(
-                "config has {} publications; using the first {MAX_PUBLICATIONS}",
-                sections.len()
-            ),
+            detail = format!("spec has {} publications; using the first {MAX_PUBLICATIONS}", sections.len()),
         );
-        sections = &sections[..MAX_PUBLICATIONS];
+        truncated = sections[..MAX_PUBLICATIONS].to_vec();
+        sections = &truncated;
     }
 
     let mut publications = Vec::with_capacity(sections.len());
-    for (index, section) in sections.iter().enumerate() {
+    for (index, raw) in sections.iter().enumerate() {
         let label = format!("publication[{index}]");
-
-        if section.observer_public_key.is_some() {
-            warn!(
-                setup::observability::PUBLICATIONS_CONFIG,
-                reason = "encrypted_not_implemented",
-                detail = format!("{label}: observer_public_key set; skipping this bag until sealed-box lands"),
-            );
-            continue;
-        }
-
-        if section.items.is_empty() {
-            warn!(
-                setup::observability::PUBLICATIONS_CONFIG,
-                reason = "empty_items",
-                detail = format!("{label}: items is empty; skipping"),
-            );
-            continue;
-        }
-
-        let mut fields = Vec::with_capacity(section.items.len());
-        let mut seen = BTreeMap::new();
-        for item in &section.items {
-            let Ok(field) = FieldId::from_str(item) else {
-                warn!(
-                    setup::observability::PUBLICATIONS_CONFIG,
-                    reason = "unknown_field",
-                    detail = format!("{label}: ignoring unknown field '{item}'"),
-                );
-                continue;
-            };
-            if seen.insert(field.as_str(), ()).is_some() {
-                warn!(
-                    setup::observability::PUBLICATIONS_CONFIG,
-                    reason = "duplicate_field",
-                    detail = format!("{label}: duplicate field '{}'; keeping first", field.as_str()),
-                );
-                continue;
+        match parse_publication_spec(raw) {
+            Ok(ParsedPublication::Open { fields }) => {
+                if let Some(resolved) = resolve_fields(&label, &fields) {
+                    publications.push(resolved);
+                }
             }
-            fields.push(field);
+            Ok(ParsedPublication::Encrypted { .. }) => {
+                warn!(
+                    setup::observability::PUBLICATIONS_CONFIG,
+                    reason = "encrypted_not_implemented",
+                    detail = format!("{label}: enc:… set; skipping this bag until sealed-box lands"),
+                );
+            }
+            Err(err) => {
+                warn!(
+                    setup::observability::PUBLICATIONS_CONFIG,
+                    reason = "parse_failed",
+                    detail = format!("{label}: {err:#}"),
+                );
+            }
         }
-
-        if fields.is_empty() {
-            warn!(
-                setup::observability::PUBLICATIONS_CONFIG,
-                reason = "empty_items",
-                detail = format!("{label}: no known fields left after filtering; skipping"),
-            );
-            continue;
-        }
-
-        publications.push(ResolvedPublication { fields });
     }
 
     if publications.is_empty() {
         warn!(
             setup::observability::PUBLICATIONS_CONFIG,
             reason = "no_valid_publications",
-            detail = "no usable [[publication]] sections; falling back to default all-fields bag".to_string(),
+            detail = "no usable publication specs; falling back to default all-fields bag".to_string(),
         );
-        let fallback = PublicationSection::default_open_all();
-        let fields: Vec<_> = fallback.items.iter().filter_map(|s| FieldId::from_str(s).ok()).collect();
-        publications.push(ResolvedPublication { fields });
+        publications.push(ResolvedPublication { fields: FieldId::ALL.to_vec() });
     }
 
     ResolvedConfig { publications }
+}
+
+enum ParsedPublication {
+    Open { fields: Vec<String> },
+    Encrypted { _observer_public_key: [u8; OBSERVER_PUBLIC_KEY_LEN], _fields: Vec<String> },
+}
+
+fn parse_publication_spec(raw: &str) -> anyhow::Result<ParsedPublication> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        bail!("empty publication spec");
+    }
+
+    let (kind, rest) = match raw.split_once(':') {
+        Some((kind, rest)) => (kind.trim(), Some(rest.trim())),
+        None => (raw, None),
+    };
+
+    match kind {
+        "open" | "o" => {
+            let fields = parse_field_list(rest.unwrap_or("all"))?;
+            Ok(ParsedPublication::Open { fields })
+        }
+        "enc" | "e" => {
+            let rest = rest.ok_or_else(|| anyhow::anyhow!("enc: requires <64hex>:<fields>"))?;
+            let (key_hex, fields_raw) =
+                rest.split_once(':').ok_or_else(|| anyhow::anyhow!("enc: requires <64hex>:<fields>"))?;
+            let key = parse_observer_public_key(key_hex.trim())?;
+            let fields = parse_field_list(fields_raw.trim())?;
+            Ok(ParsedPublication::Encrypted { _observer_public_key: key, _fields: fields })
+        }
+        other => bail!("unknown publication kind '{other}' (expected open|o|enc|e)"),
+    }
+}
+
+fn parse_field_list(raw: &str) -> anyhow::Result<Vec<String>> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        bail!("field list is empty");
+    }
+    if raw.eq_ignore_ascii_case("all") {
+        return Ok(FieldId::ALL.iter().map(|f| f.as_str().to_string()).collect());
+    }
+    let fields: Vec<String> = raw.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
+    if fields.is_empty() {
+        bail!("field list is empty");
+    }
+    Ok(fields)
+}
+
+fn parse_observer_public_key(hex_key: &str) -> anyhow::Result<[u8; OBSERVER_PUBLIC_KEY_LEN]> {
+    let bytes = hex::decode(hex_key).map_err(|e| anyhow::anyhow!("invalid observer_public_key hex: {e}"))?;
+    if bytes.len() != OBSERVER_PUBLIC_KEY_LEN {
+        bail!(
+            "observer_public_key must be {OBSERVER_PUBLIC_KEY_LEN} bytes ({} hex chars), got {} bytes",
+            OBSERVER_PUBLIC_KEY_LEN * 2,
+            bytes.len()
+        );
+    }
+    let mut out = [0u8; OBSERVER_PUBLIC_KEY_LEN];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn resolve_fields(label: &str, items: &[String]) -> Option<ResolvedPublication> {
+    let mut fields = Vec::with_capacity(items.len());
+    let mut seen = BTreeMap::new();
+    for item in items {
+        let Ok(field) = FieldId::from_str(item) else {
+            warn!(
+                setup::observability::PUBLICATIONS_CONFIG,
+                reason = "unknown_field",
+                detail = format!("{label}: ignoring unknown field '{item}'"),
+            );
+            continue;
+        };
+        if seen.insert(field.as_str(), ()).is_some() {
+            warn!(
+                setup::observability::PUBLICATIONS_CONFIG,
+                reason = "duplicate_field",
+                detail = format!("{label}: duplicate field '{}'; keeping first", field.as_str()),
+            );
+            continue;
+        }
+        fields.push(field);
+    }
+
+    if fields.is_empty() {
+        warn!(
+            setup::observability::PUBLICATIONS_CONFIG,
+            reason = "empty_items",
+            detail = format!("{label}: no known fields left after filtering; skipping"),
+        );
+        return None;
+    }
+
+    Some(ResolvedPublication { fields })
 }
 
 fn build_message(
@@ -456,17 +444,32 @@ fn build_message(
     let pubs: Vec<Publication> = config
         .publications
         .iter()
-        .map(|section| {
-            // Encrypted bags are skipped at resolve time until sealed-box lands.
-            Publication::Open {
-                version: PUBLICATION_VERSION,
-                snapshot_slot,
-                payload: build_payload(&section.fields, identity, &live),
-            }
+        .map(|section| Publication::Open {
+            version: PUBLICATION_VERSION,
+            snapshot_slot,
+            payload: build_payload(&section.fields, identity, &live),
         })
         .collect();
     // Pre-encode once per snapshot window; observe serves these CBOR bytes verbatim.
-    Message::cache_publications(pubs)
+    let msg = Message::cache_publications(pubs);
+    if let Message::CachedPublications(bytes) = &msg
+        && bytes.as_ref().len() > MAX_MESSAGE_BYTES
+    {
+        warn!(
+            setup::observability::PUBLICATIONS_CONFIG,
+            reason = "oversized_message",
+            detail = format!(
+                "encoded MsgPublications is {} bytes (limit {MAX_MESSAGE_BYTES}); falling back to node_name-only bag",
+                bytes.as_ref().len()
+            ),
+        );
+        return Message::cache_publications(vec![Publication::Open {
+            version: PUBLICATION_VERSION,
+            snapshot_slot,
+            payload: OpenPayload { node_name: Some(NODE_NAME.to_string()), ..OpenPayload::default() },
+        }]);
+    }
+    msg
 }
 
 struct LiveSamples {
@@ -514,21 +517,15 @@ fn build_payload(fields: &[FieldId], identity: &NodeIdentity, live: &LiveSamples
                     .insert("amaru.version".into(), ExperimentalValue::Text(identity.version.to_string()));
             }
             FieldId::CpuCores => {
-                payload
-                    .experimental
-                    .insert("amaru.cpu_cores".into(), ExperimentalValue::Uint(live.cpu_cores));
+                payload.experimental.insert("amaru.cpu_cores".into(), ExperimentalValue::Uint(live.cpu_cores));
             }
             FieldId::ProcessRssBytes => {
                 if let Some(rss) = live.process_rss_bytes {
-                    payload
-                        .experimental
-                        .insert("amaru.process_rss_bytes".into(), ExperimentalValue::Uint(rss));
+                    payload.experimental.insert("amaru.process_rss_bytes".into(), ExperimentalValue::Uint(rss));
                 }
             }
             FieldId::PeersInbound => {
-                payload
-                    .experimental
-                    .insert("amaru.peers_inbound".into(), ExperimentalValue::Uint(live.peers.inbound));
+                payload.experimental.insert("amaru.peers_inbound".into(), ExperimentalValue::Uint(live.peers.inbound));
             }
             FieldId::PeersOutbound => {
                 payload
@@ -542,15 +539,12 @@ fn build_payload(fields: &[FieldId], identity: &NodeIdentity, live: &LiveSamples
                 );
             }
             FieldId::PeersUsing => {
-                payload
-                    .experimental
-                    .insert("amaru.peers_using".into(), ExperimentalValue::Uint(live.peers.using));
+                payload.experimental.insert("amaru.peers_using".into(), ExperimentalValue::Uint(live.peers.using));
             }
             FieldId::PeersTargetUpstream => {
-                payload.experimental.insert(
-                    "amaru.peers_target_upstream".into(),
-                    ExperimentalValue::Uint(live.peers.target_upstream),
-                );
+                payload
+                    .experimental
+                    .insert("amaru.peers_target_upstream".into(), ExperimentalValue::Uint(live.peers.target_upstream));
             }
             FieldId::PeersTargetDownstream => {
                 payload.experimental.insert(
@@ -567,11 +561,12 @@ fn build_payload(fields: &[FieldId], identity: &NodeIdentity, live: &LiveSamples
 fn sample_process_rss_bytes() -> Option<u64> {
     #[cfg(target_os = "linux")]
     {
-        if let Some(rss) = read_proc_self_vm_rss() {
-            return Some(rss);
-        }
+        read_proc_self_vm_rss()
     }
-    sample_rss_via_sysinfo()
+    #[cfg(not(target_os = "linux"))]
+    {
+        sample_rss_via_sysinfo()
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -587,6 +582,7 @@ fn read_proc_self_vm_rss() -> Option<u64> {
     None
 }
 
+#[cfg(not(target_os = "linux"))]
 fn sample_rss_via_sysinfo() -> Option<u64> {
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
@@ -609,8 +605,8 @@ mod tests {
     }
 
     #[test]
-    fn default_file_builds_one_open_publication_with_all_fields() {
-        let resolved = resolve_config(&PublicationsFile::default());
+    fn default_open_all_builds_one_open_publication_with_all_fields() {
+        let resolved = resolve_specs(&["open:all".into()]);
         let msg = build_message(&resolved, &identity(), 1200, &PeerConnectionSnapshot::default());
         assert!(matches!(msg, Message::CachedPublications(_)));
         let pubs = msg.logical_publications().expect("cached logical pubs");
@@ -627,8 +623,20 @@ mod tests {
         assert_eq!(payload.git_revision.as_deref(), Some(identity().git_revision));
         assert!(payload.experimental.contains_key("amaru.version"));
         assert!(payload.experimental.contains_key("amaru.cpu_cores"));
-        assert!(!payload.experimental.contains_key("amaru.git_revision"));
-        assert!(!payload.experimental.contains_key("amaru.version_minor"));
+    }
+
+    #[test]
+    fn bare_open_means_all_fields() {
+        let resolved = resolve_specs(&["open".into()]);
+        assert_eq!(resolved.publications[0].fields.len(), FieldId::ALL.len());
+    }
+
+    #[test]
+    fn flatten_specs_splits_semicolons() {
+        assert_eq!(
+            flatten_specs(&["open:name;open:cpu".into(), "open:ver".into()]),
+            vec!["open:name".to_string(), "open:cpu".to_string(), "open:ver".to_string()]
+        );
     }
 
     #[test]
@@ -641,15 +649,7 @@ mod tests {
 
     #[test]
     fn multiple_publications_can_share_fields() {
-        let toml = r#"
-            [[publication]]
-            items = ["node_name", "node_version_major", "amaru.version"]
-
-            [[publication]]
-            items = ["node_name", "amaru.cpu_cores", "amaru.process_rss_bytes"]
-        "#;
-        let file: PublicationsFile = toml::from_str(toml).unwrap();
-        let resolved = resolve_config(&file);
+        let resolved = resolve_specs(&["open:name,maj,ver".into(), "o:name,cpu,rss".into()]);
         let msg = build_message(&resolved, &identity(), 600, &PeerConnectionSnapshot::default());
         let pubs = msg.logical_publications().expect("cached logical pubs");
         assert_eq!(pubs.len(), 2);
@@ -673,81 +673,41 @@ mod tests {
 
     #[test]
     fn ignores_unknown_field_id_and_keeps_known_ones() {
-        let toml = r#"
-            [[publication]]
-            items = ["node_name", "fake_slot", "amaru.version"]
-        "#;
-        let file: PublicationsFile = toml::from_str(toml).unwrap();
-        let resolved = resolve_config(&file);
+        let resolved = resolve_specs(&["open:name,fake_slot,ver".into()]);
         assert_eq!(resolved.publications.len(), 1);
-        assert_eq!(
-            resolved.publications[0].fields,
-            vec![FieldId::NodeName, FieldId::Version]
-        );
+        assert_eq!(resolved.publications[0].fields, vec![FieldId::NodeName, FieldId::Version]);
     }
 
     #[test]
     fn skips_encrypted_publication_until_implemented() {
-        let toml = r#"
-            [[publication]]
-            observer_public_key = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
-            items = ["node_name", "amaru.cpu_cores"]
-
-            [[publication]]
-            items = ["node_name"]
-        "#;
-        let file: PublicationsFile = toml::from_str(toml).unwrap();
-        let resolved = resolve_config(&file);
+        let key = "00".repeat(32);
+        let resolved = resolve_specs(&[format!("enc:{key}:name,cpu"), "open:name".into()]);
         assert_eq!(resolved.publications.len(), 1);
         assert_eq!(resolved.publications[0].fields, vec![FieldId::NodeName]);
     }
 
     #[test]
     fn ignores_duplicate_field_keeping_first() {
-        let toml = r#"
-            [[publication]]
-            items = ["node_name", "node_name", "amaru.version"]
-        "#;
-        let file: PublicationsFile = toml::from_str(toml).unwrap();
-        let resolved = resolve_config(&file);
-        assert_eq!(
-            resolved.publications[0].fields,
-            vec![FieldId::NodeName, FieldId::Version]
-        );
+        let resolved = resolve_specs(&["open:name,name,ver".into()]);
+        assert_eq!(resolved.publications[0].fields, vec![FieldId::NodeName, FieldId::Version]);
     }
 
     #[test]
     fn falls_back_to_default_when_all_items_unknown() {
-        let toml = r#"
-            [[publication]]
-            items = ["not_a_real_field"]
-        "#;
-        let file: PublicationsFile = toml::from_str(toml).unwrap();
-        let resolved = resolve_config(&file);
+        let resolved = resolve_specs(&["open:not_a_real_field".into()]);
         assert_eq!(resolved.publications.len(), 1);
         assert_eq!(resolved.publications[0].fields.len(), FieldId::ALL.len());
     }
 
     #[test]
-    fn ignores_unknown_toml_keys() {
-        let toml = r#"
-            [[publication]]
-            future_option = true
-            items = ["node_name"]
-        "#;
-        let file: PublicationsFile = toml::from_str(toml).unwrap();
-        let resolved = resolve_config(&file);
-        assert_eq!(resolved.publications[0].fields, vec![FieldId::NodeName]);
+    fn falls_back_on_parse_failure() {
+        let resolved = resolve_specs(&["nope:name".into()]);
+        assert_eq!(resolved.publications[0].fields.len(), FieldId::ALL.len());
     }
 
     #[test]
     fn node_name_is_always_amaru_even_if_only_that_field_is_selected() {
-        let toml = r#"
-            [[publication]]
-            items = ["node_name"]
-        "#;
-        let file: PublicationsFile = toml::from_str(toml).unwrap();
-        let resolved = resolve_config(&file);
+        let resolved = resolve_specs(&["open:name".into()]);
         let msg = build_message(&resolved, &identity(), 0, &PeerConnectionSnapshot::default());
         let pubs = msg.logical_publications().expect("cached logical pubs");
         let Publication::Open { payload, .. } = &pubs[0] else {
@@ -760,13 +720,8 @@ mod tests {
 
     #[test]
     fn git_revision_matches_build_short_sha() {
-        let toml = r#"
-            [[publication]]
-            items = ["git_revision"]
-        "#;
-        let file: PublicationsFile = toml::from_str(toml).unwrap();
         let id = identity();
-        let resolved = resolve_config(&file);
+        let resolved = resolve_specs(&["open:git".into()]);
         let msg = build_message(&resolved, &id, 0, &PeerConnectionSnapshot::default());
         let pubs = msg.logical_publications().unwrap();
         let Publication::Open { payload, .. } = &pubs[0] else {
@@ -774,5 +729,11 @@ mod tests {
         };
         assert_eq!(payload.git_revision.as_deref(), Some(id.git_revision));
         assert!(payload.experimental.is_empty());
+    }
+
+    #[test]
+    fn accepts_full_catalogue_ids() {
+        let resolved = resolve_specs(&["open:node_name,amaru.cpu_cores".into()]);
+        assert_eq!(resolved.publications[0].fields, vec![FieldId::NodeName, FieldId::CpuCores]);
     }
 }

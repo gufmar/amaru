@@ -13,6 +13,12 @@
 // limitations under the License.
 
 //! One-shot N2N probe against a live peer (experimental observability CIP support).
+//!
+//! Business output goes to stdout (EDR-0019); silence Clippy print lints for this CLI.
+
+#![expect(clippy::print_stdout)]
+#![expect(clippy::print_literal)]
+#![expect(clippy::wildcard_enum_match_arm)]
 
 mod session;
 
@@ -26,7 +32,8 @@ use amaru::{
     lifecycle::{Runnable, RuntimeKind},
     observability::Color,
 };
-use amaru_kernel::{NetworkName, Peer};
+use amaru_kernel::{NetworkName, Peer, utils::duration};
+use amaru_observability::info;
 use amaru_protocols::protocol_messages::version_number::VersionNumber;
 use anyhow::{Context, bail};
 use clap::Parser;
@@ -42,105 +49,116 @@ pub struct Args {
         long,
         value_name = amaru::value_names::NETWORK,
         env = amaru::env_vars::NETWORK,
-        default_value = "mainnet"
+        default_value = "mainnet",
+        display_order = 0,
     )]
     network: NetworkName,
 
-    /// TCP connect timeout in milliseconds.
+    /// TCP connect timeout.
     #[arg(
         long = "connect-timeout",
-        value_name = "MS",
+        value_name = amaru::value_names::DURATION,
+        value_parser = duration::parse,
         env = amaru::env_vars::PROBE_CONNECT_TIMEOUT,
-        default_value = "5000"
+        default_value = "5s",
+        display_order = 0,
     )]
-    connect_timeout_ms: u64,
+    connect_timeout: Duration,
 
-    /// Handshake mini-protocol timeout in milliseconds.
+    /// Handshake mini-protocol timeout.
     #[arg(
         long = "handshake-timeout",
-        value_name = "MS",
+        value_name = amaru::value_names::DURATION,
+        value_parser = duration::parse,
         env = amaru::env_vars::PROBE_HANDSHAKE_TIMEOUT,
-        default_value = "10000"
+        default_value = "10s",
+        display_order = 0,
     )]
-    handshake_timeout_ms: u64,
+    handshake_timeout: Duration,
 
-    /// Timeout for chainsync / peer-share / observability replies in milliseconds.
+    /// Timeout for chainsync / peer-share / observability replies.
     #[arg(
         long = "protocol-timeout",
-        value_name = "MS",
+        value_name = amaru::value_names::DURATION,
+        value_parser = duration::parse,
         env = amaru::env_vars::PROBE_PROTOCOL_TIMEOUT,
-        default_value = "15000"
+        default_value = "15s",
+        display_order = 0,
     )]
-    protocol_timeout_ms: u64,
+    protocol_timeout: Duration,
 
     /// Measure keep-alive mini-protocol RTT after TCP connect + N2N handshake.
     ///
-    /// Optional value: `COUNT` (1..=86400, one ping per second) or `COUNT:INTERVAL_MS`
-    /// (e.g. `20:5000` = 20 pings, 5000 ms apart). Bare `--ping` runs once.
+    /// Optional value: `COUNT` (1..=86400, one ping per second) or `COUNT:INTERVAL`
+    /// (e.g. `20:5s` = 20 pings, 5s apart). Bare `--ping` runs once.
     #[arg(
         long,
         num_args = 0..=1,
         default_missing_value = "1",
-        value_name = "COUNT|COUNT:INTERVAL_MS"
+        value_name = "COUNT|COUNT:INTERVAL",
+        display_order = 0,
     )]
     ping: Option<PingSpec>,
 
     /// Query remote offered N2N versions (`MsgQueryReply`) and print them.
-    #[arg(long)]
+    #[arg(long, display_order = 0)]
     handshake: bool,
 
     /// Request up to 10 peer-share addresses.
-    #[arg(long)]
-    peershare: bool,
+    #[arg(long = "peer-share", alias = "peershare", display_order = 0)]
+    peer_share: bool,
 
     /// After peer-share, TCP-ping (and observe) each returned peer.
-    #[arg(long)]
-    pscheck: bool,
+    #[arg(long = "ps-check", alias = "pscheck", display_order = 0)]
+    ps_check: bool,
 
     /// Query tip via chain-sync FindIntersect(Origin).
-    #[arg(long)]
+    #[arg(long, display_order = 0)]
     tip: bool,
 
     /// Query the experimental observability mini-protocol (mux 11).
-    #[arg(long)]
+    #[arg(long, display_order = 0)]
     observe: bool,
 
-    /// Run ping, handshake, tip, peershare, and observe (then pscheck if peers are returned).
-    #[arg(long)]
+    /// Run ping, handshake, tip, peer-share, and observe (then ps-check if peers are returned).
+    #[arg(long, display_order = 0)]
     all: bool,
 
     /// Record per-step wall timestamps, deltas, elapsed-from-start, and TCP bytes.
-    #[arg(long)]
-    timetrack: bool,
+    #[arg(long = "time-track", alias = "timetrack", display_order = 0)]
+    time_track: bool,
 
     /// Extra attempts after a failed handshake-query or session step.
     ///
-    /// Optional value: `COUNT` (1..=32 retries, 500 ms apart) or `COUNT:INTERVAL_MS`
-    /// (e.g. `2:500` = retry twice, 500 ms between attempts). Bare `--retry` retries once
+    /// Optional value: `COUNT` (1..=32 retries, 500 ms apart) or `COUNT:INTERVAL`
+    /// (e.g. `2:500ms` = retry twice, 500 ms between attempts). Bare `--retry` retries once
     /// after 500 ms. Does not multiply `--ping` samples.
     #[arg(
         long,
         num_args = 0..=1,
-        default_missing_value = "1:500",
-        value_name = "COUNT|COUNT:INTERVAL_MS",
-        env = amaru::env_vars::PROBE_RETRY
+        default_missing_value = "1:500ms",
+        value_name = "COUNT|COUNT:INTERVAL",
+        env = amaru::env_vars::PROBE_RETRY,
+        display_order = 0,
     )]
     retry: Option<RetrySpec>,
 
     /// Highest N2N version to offer in the handshake (default: highest Amaru can speak).
     ///
     /// Proposes every Amaru-supported version from 11 through this value. Must be a
-    /// version Amaru implements (today: 11..=16). Alias: `--requestedVersion`.
+    /// version Amaru implements (today: 11..=16).
     #[arg(
         long = "requested-version",
-        visible_alias = "requestedVersion",
-        value_name = "N",
-        default_value_t = amaru_protocols::protocol_messages::version_number::VersionNumber::HIGHEST.as_u64()
+        alias = "requestedVersion",
+        value_name = amaru::value_names::UINT,
+        env = amaru::env_vars::PROBE_REQUESTED_VERSION,
+        default_value_t = amaru_protocols::protocol_messages::version_number::VersionNumber::HIGHEST.as_u64(),
+        display_order = 0,
     )]
     requested_version: u64,
 
     /// Emit machine-readable JSON instead of color human output.
-    #[arg(long)]
+    #[arg(long, display_order = 0)]
     json: bool,
 }
 
@@ -185,13 +203,18 @@ fn parse_count_interval(
     max_count: u32,
 ) -> Result<(u32, Duration), String> {
     let (count_str, interval) = if let Some((count_str, interval_str)) = s.split_once(':') {
-        let interval_ms: u64 = interval_str
-            .parse()
-            .map_err(|_| format!("invalid {kind} interval '{interval_str}' (expected milliseconds)"))?;
-        if interval_ms == 0 {
-            return Err(format!("{kind} interval must be >= 1 ms"));
-        }
-        (count_str, Duration::from_millis(interval_ms))
+        // Bare digits mean milliseconds (legacy); otherwise `duration::parse` (`5s`, `500ms`, …).
+        let interval = if interval_str.chars().all(|c| c.is_ascii_digit()) {
+            let interval_ms: u64 =
+                interval_str.parse().map_err(|_| format!("invalid {kind} interval '{interval_str}'"))?;
+            if interval_ms == 0 {
+                return Err(format!("{kind} interval must be >= 1 ms"));
+            }
+            Duration::from_millis(interval_ms)
+        } else {
+            duration::parse(interval_str).map_err(|e| format!("invalid {kind} interval: {e}"))?
+        };
+        (count_str, interval)
     } else {
         (s, default_interval)
     };
@@ -233,8 +256,8 @@ where
 struct Actions {
     ping: Option<PingSpec>,
     handshake: bool,
-    peershare: bool,
-    pscheck: bool,
+    peer_share: bool,
+    ps_check: bool,
     tip: bool,
     observe: bool,
 }
@@ -245,8 +268,8 @@ impl Actions {
             return Self {
                 ping: Some(PingSpec { count: 1, interval: Duration::from_secs(1) }),
                 handshake: true,
-                peershare: true,
-                pscheck: true,
+                peer_share: true,
+                ps_check: true,
                 tip: true,
                 observe: true,
             };
@@ -254,20 +277,20 @@ impl Actions {
         let mut actions = Self {
             ping: args.ping,
             handshake: args.handshake,
-            peershare: args.peershare || args.pscheck,
-            pscheck: args.pscheck,
+            peer_share: args.peer_share || args.ps_check,
+            ps_check: args.ps_check,
             tip: args.tip,
             observe: args.observe,
         };
         if actions.ping.is_none()
-            && !(actions.handshake || actions.peershare || actions.pscheck || actions.tip || actions.observe)
+            && !(actions.handshake || actions.peer_share || actions.ps_check || actions.tip || actions.observe)
         {
             // Default: full probe when no action flag is given.
             actions = Self {
                 ping: Some(PingSpec { count: 1, interval: Duration::from_secs(1) }),
                 handshake: true,
-                peershare: true,
-                pscheck: false,
+                peer_share: true,
+                ps_check: false,
                 tip: true,
                 observe: true,
             };
@@ -276,7 +299,7 @@ impl Actions {
     }
 
     fn needs_session(self) -> bool {
-        self.ping.is_some() || self.peershare || self.tip || self.observe
+        self.ping.is_some() || self.peer_share || self.tip || self.observe
     }
 }
 
@@ -287,13 +310,39 @@ pub(crate) fn runnable(args: Args) -> Runnable {
 async fn run(args: Args) -> anyhow::Result<()> {
     let actions = Actions::from_args(&args);
     let peer: Peer = args.address.parse().context("invalid IP:PORT address")?;
-    let connect_timeout = Duration::from_millis(args.connect_timeout_ms);
-    let handshake_timeout = Duration::from_millis(args.handshake_timeout_ms);
-    let protocol_timeout = Duration::from_millis(args.protocol_timeout_ms);
+    let connect_timeout = args.connect_timeout;
+    let handshake_timeout = args.handshake_timeout;
+    let protocol_timeout = args.protocol_timeout;
     let max_n2n_version = resolve_requested_version(args.requested_version)?;
     let color = color_enabled();
     // Stream long-running human steps as they complete; JSON stays one final document.
     let stream = !args.json;
+
+    info!(
+        cli::peer::PROBE,
+        address = args.address.as_str(),
+        network = args.network,
+        connect_timeout = duration::format(&args.connect_timeout),
+        handshake_timeout = duration::format(&args.handshake_timeout),
+        protocol_timeout = duration::format(&args.protocol_timeout),
+        ping = args
+            .ping
+            .map(|p| format!("{}:{}", p.count, duration::format(&p.interval)))
+            .unwrap_or_else(|| "off".to_string()),
+        handshake = actions.handshake,
+        peer_share = actions.peer_share,
+        ps_check = actions.ps_check,
+        tip = actions.tip,
+        observe = actions.observe,
+        all = args.all,
+        time_track = args.time_track,
+        retry = args
+            .retry
+            .map(|r| format!("{}:{}", r.count, duration::format(&r.interval)))
+            .unwrap_or_else(|| "off".to_string()),
+        requested_version = args.requested_version,
+        json = args.json,
+    );
 
     let mut report = session::ProbeReport {
         address: args.address.clone(),
@@ -309,9 +358,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
         errors: Vec::new(),
     };
 
-    // Shared timeline clock across query + session when `--timetrack` is set.
+    // Shared timeline clock across query + session when `--time-track` is set.
     let mut track_clock: Option<(Instant, Instant)> = None;
-    if args.timetrack {
+    if args.time_track {
         let started = Instant::now();
         track_clock = Some((started, started));
     }
@@ -329,18 +378,16 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 connect_timeout,
                 handshake_timeout,
                 max_n2n_version,
-                args.timetrack,
+                args.time_track,
                 track_clock,
             )
         })
         .await
         {
             Ok((offered, steps)) => {
-                report.handshake = Some(session::HandshakeInfo {
-                    offered_versions: offered,
-                    ..session::HandshakeInfo::default()
-                });
-                if args.timetrack {
+                report.handshake =
+                    Some(session::HandshakeInfo { offered_versions: offered, ..session::HandshakeInfo::default() });
+                if args.time_track {
                     report.timetrack.extend(steps);
                     if let Some((_, last)) = track_clock.as_mut() {
                         *last = Instant::now();
@@ -369,11 +416,11 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 connect_timeout,
                 handshake_timeout,
                 protocol_timeout,
-                want_peershare: actions.peershare,
+                want_peershare: actions.peer_share,
                 want_tip: actions.tip,
                 want_observe: actions.observe,
                 want_ping: actions.ping.map(|s| (s.count, s.interval)),
-                want_timetrack: args.timetrack,
+                want_timetrack: args.time_track,
                 timetrack_continue: track_clock,
                 max_n2n_version,
                 peer_share_amount: 10,
@@ -404,7 +451,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 report.tip = partial.tip;
                 report.publications = partial.publications;
                 report.errors.extend(partial.errors);
-                if args.timetrack {
+                if args.time_track {
                     report.timetrack.extend(partial.timetrack);
                 }
             }
@@ -417,22 +464,17 @@ async fn run(args: Args) -> anyhow::Result<()> {
             if !report.ping_rtts_ms.is_empty() {
                 print_ping_section_buffered(&report, color);
             }
-            print_session_sections(
-                &report,
-                color,
-                /*include_pscheck*/ false,
-                /*skip_handshake*/ true,
-            );
+            print_session_sections(&report, color, /*include_pscheck*/ false, /*skip_handshake*/ true);
         }
     } else if stream && actions.handshake {
         // handshake-only already streamed above
     }
 
-    if stream && args.timetrack && !report.timetrack.is_empty() {
+    if stream && args.time_track && !report.timetrack.is_empty() {
         print_timetrack_section(&report.timetrack, color);
     }
 
-    if actions.pscheck {
+    if actions.ps_check {
         let peers = report.peers.clone().unwrap_or_default();
         let mut pscheck_header = stream && !peers.is_empty();
         for addr in peers {
@@ -590,12 +632,7 @@ fn print_handshake_section(hs: &session::HandshakeInfo, color: bool) {
     let (ok, _, _, _, _, reset) = color_palette(color);
     println!("  {ok}handshake{reset}");
     if !hs.offered_versions.is_empty() {
-        let list = hs
-            .offered_versions
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let list = hs.offered_versions.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
         println!("    offered_versions: [{list}]");
     }
     if let Some(v) = hs.version {
@@ -620,17 +657,10 @@ fn print_handshake_section(hs: &session::HandshakeInfo, color: bool) {
 }
 
 /// Tip / peershare / observe (and optionally already-collected pscheck rows).
-fn print_session_sections(
-    report: &session::ProbeReport,
-    color: bool,
-    include_pscheck: bool,
-    skip_handshake: bool,
-) {
+fn print_session_sections(report: &session::ProbeReport, color: bool, include_pscheck: bool, skip_handshake: bool) {
     let (ok, warn, _err, _, _, reset) = color_palette(color);
 
-    if !skip_handshake
-        && let Some(hs) = &report.handshake
-    {
+    if !skip_handshake && let Some(hs) = &report.handshake {
         print_handshake_section(hs, color);
     }
     if let Some(tip) = &report.tip {
@@ -645,11 +675,11 @@ fn print_session_sections(
         } else {
             println!("  {ok}peershare{reset}  {} peer(s)", peers.len());
             for p in peers {
-                if include_pscheck {
-                    if let Some(check) = report.peer_checks.iter().find(|c| c.address == *p) {
-                        print_peershare_check_line(p, check, ok, warn, reset);
-                        continue;
-                    }
+                if include_pscheck
+                    && let Some(check) = report.peer_checks.iter().find(|c| c.address == *p)
+                {
+                    print_peershare_check_line(p, check, ok, warn, reset);
+                    continue;
                 }
                 println!("    {p}");
             }
@@ -675,13 +705,7 @@ fn print_session_sections(
     flush_stdout();
 }
 
-fn print_peershare_check_line(
-    addr: &str,
-    check: &session::PeerCheck,
-    ok: &str,
-    warn: &str,
-    reset: &str,
-) {
+fn print_peershare_check_line(addr: &str, check: &session::PeerCheck, ok: &str, warn: &str, reset: &str) {
     let ping = match check.ping_rtt_ms {
         Some(ms) => format!("{ms} ms"),
         None => "ping failed".to_string(),
@@ -729,10 +753,7 @@ fn print_errors(errors: &[String], color: bool) {
 fn print_timetrack_section(steps: &[session::TimeTrackStep], color: bool) {
     let (ok, _, _, _, _, reset) = color_palette(color);
     println!("  {ok}timetrack{reset}");
-    println!(
-        "    {:<22} {:>10} {:>10} {:>10} {:>10}  {}",
-        "step", "delta_ms", "elapsed_ms", "sent", "recv", "at"
-    );
+    println!("    {:<22} {:>10} {:>10} {:>10} {:>10}  {}", "step", "delta_ms", "elapsed_ms", "sent", "recv", "at");
     for s in steps {
         println!(
             "    {:<22} {:>10} {:>10} {:>10} {:>10}  {}",
@@ -847,11 +868,8 @@ fn print_publication_item(item: &serde_json::Value, indent: &str) {
 }
 
 fn color_enabled() -> bool {
-    let mode = std::env::var("AMARU_COLOR")
-        .ok()
-        .as_deref()
-        .and_then(|s| Color::from_str(s).ok())
-        .unwrap_or(Color::Auto);
+    let mode =
+        std::env::var("AMARU_COLOR").ok().as_deref().and_then(|s| Color::from_str(s).ok()).unwrap_or(Color::Auto);
     match mode {
         Color::Never => false,
         Color::Always => true,
@@ -870,11 +888,7 @@ fn resolve_requested_version(raw: u64) -> anyhow::Result<VersionNumber> {
     if version.is_supported() {
         return Ok(version);
     }
-    let supported = VersionNumber::SUPPORTED
-        .iter()
-        .map(|v| v.as_u64().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let supported = VersionNumber::SUPPORTED.iter().map(|v| v.as_u64().to_string()).collect::<Vec<_>>().join(", ");
     bail!(
         "unsupported --requested-version {raw}; Amaru speaks N2N versions [{supported}] (default {})",
         VersionNumber::HIGHEST.as_u64()
@@ -890,6 +904,8 @@ mod tests {
         let spec: RetrySpec = "2:500".parse().unwrap();
         assert_eq!(spec.count, 2);
         assert_eq!(spec.interval, Duration::from_millis(500));
+        let with_unit: RetrySpec = "2:500ms".parse().unwrap();
+        assert_eq!(with_unit.interval, Duration::from_millis(500));
     }
 
     #[test]
@@ -911,13 +927,7 @@ mod tests {
         let mut tries = 0u32;
         let result = with_retries(Some(RetrySpec { count: 2, interval: Duration::from_millis(1) }), || {
             tries += 1;
-            async move {
-                if tries < 3 {
-                    Err("transient")
-                } else {
-                    Ok(42)
-                }
-            }
+            async move { if tries < 3 { Err("transient") } else { Ok(42) } }
         })
         .await;
         assert_eq!(result, Ok(42));

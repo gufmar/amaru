@@ -1789,6 +1789,29 @@ define_schemas! {
                     }
                 }
             }
+            peer {
+                tags: cli
+                /// Effective configuration for `amaru peer probe`
+                public event PROBE {
+                    levels: info
+                    required address: String
+                    required network: %amaru_kernel::NetworkName
+                    required connect_timeout: String
+                    required handshake_timeout: String
+                    required protocol_timeout: String
+                    required ping: String
+                    required handshake: bool
+                    required peer_share: bool
+                    required ps_check: bool
+                    required tip: bool
+                    required observe: bool
+                    required all: bool
+                    required time_track: bool
+                    required retry: String
+                    required requested_version: u64
+                    required json: bool
+                }
+            }
             node {
                 tags: setup
                 /// The effective configuration a node run starts with
@@ -1799,6 +1822,8 @@ define_schemas! {
                     required db_ledger_max_extra_snapshots: String
                     required mempool_max_bytes: String
                     required network: %amaru_kernel::NetworkName
+                    /// Publication DSL (`open:…;…`) or `disabled`
+                    required observability: String
                     required peer: String
                     required peers_listen_on: String
                     required peers_max_downstream: usize
@@ -3233,13 +3258,14 @@ define_schemas! {
                     /// Comma-separated signals whose exporters connected successfully again
                     required recovered_signals: String
                 }
-                /// Soft publications-config issue; node continues with remaining or default bags
+                /// Soft publications-spec issue; node continues with remaining or default bags
                 public event PUBLICATIONS_CONFIG {
                     levels: warn
-                    /// reason ∈ {load_failed, unknown_field, duplicate_field, empty_items,
-                    /// encrypted_not_implemented, too_many_publications, no_valid_publications}
+                    /// reason ∈ {parse_failed, unknown_field, duplicate_field, empty_items,
+                    /// encrypted_not_implemented, too_many_publications, no_valid_publications,
+                    /// oversized_message}
                     required reason: String
-                    /// Human-readable detail (path, field id, index, error Display, …)
+                    /// Human-readable detail (spec fragment, field id, index, error Display, …)
                     required detail: String
                 }
             }

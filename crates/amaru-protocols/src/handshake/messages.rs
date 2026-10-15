@@ -125,10 +125,7 @@ pub(crate) mod tests {
         handshake::messages::Message::*,
         protocol_messages::{
             handshake::tests::any_refuse_reason,
-            version_data::{
-                VersionData,
-                tests::any_version_data_for,
-            },
+            version_data::{VersionData, tests::any_version_data_for},
             version_number::tests::any_version_number,
             version_table::tests::any_version_table,
         },

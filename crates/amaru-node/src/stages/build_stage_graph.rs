@@ -101,13 +101,10 @@ pub fn build_stage_graph(
         .with_max_inbound(config.target_downstream_peers)
         .with_share_request_delays(config.share_request_initial_delay, config.share_request_interval);
     // Experimental observability mini-protocol (draft observability-CIP).
-    // Opt in with: AMARU_OBSERVABILITY=1
-    // Optional publications TOML: AMARU_OBSERVABILITY_CONFIG / --observability-config
-    // (product binary installs the provider before build_and_run_node).
-    if std::env::var_os("AMARU_OBSERVABILITY").is_some() {
-        manager_config = manager_config
-            .with_max_n2n_version(VersionNumber::V16)
-            .with_observability_enabled(true);
+    // Product binary enables via `--observability` / `AMARU_OBSERVABILITY` and installs
+    // the publications cache provider before `build_and_run_node`.
+    if config.observability_enabled {
+        manager_config = manager_config.with_max_n2n_version(VersionNumber::V16).with_observability_enabled(true);
     }
     let peer_selection = stage_graph.wire_up(
         peer_selection,

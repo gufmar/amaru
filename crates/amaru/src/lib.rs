@@ -208,6 +208,9 @@ pub mod value_names {
     /// A formula for describing the desired mix of peers to connect to.
     pub const PEERS_MIX: &str = "([static|shared|snapshot|ledger|inbound](!|~)UINT[@DURATION][,])*";
 
+    /// Observability publication bag(s): `open[:fields]` or `enc:<64hex>:<fields>`; `;` joins bags.
+    pub const OBSERVABILITY: &str = "open[:FIELDS]|enc:<64HEX>:<FIELDS>[;…]";
+
     /// A blockchain point, formatted as slot.hash
     pub const POINT: &str = "SLOT.HEADER_HASH";
 
@@ -252,7 +255,7 @@ pub mod env_vars {
     pub const MITHRIL_SNAPSHOTS: &str = "AMARU_MITHRIL_SNAPSHOTS";
     pub const MITHRIL_UNTIL_SLOT: &str = "AMARU_MITHRIL_UNTIL_SLOT";
     pub const NETWORK: &str = "AMARU_NETWORK";
-    pub const OBSERVABILITY_CONFIG: &str = "AMARU_OBSERVABILITY_CONFIG";
+    pub const OBSERVABILITY: &str = "AMARU_OBSERVABILITY";
     pub const OPERATOR_CERT: &str = "AMARU_OPERATOR_CERT";
     pub const OPERATOR_KES: &str = "AMARU_OPERATOR_KES";
     pub const OPERATOR_VRF: &str = "AMARU_OPERATOR_VRF";
@@ -269,6 +272,7 @@ pub mod env_vars {
     pub const PROBE_CONNECT_TIMEOUT: &str = "AMARU_PROBE_CONNECT_TIMEOUT";
     pub const PROBE_HANDSHAKE_TIMEOUT: &str = "AMARU_PROBE_HANDSHAKE_TIMEOUT";
     pub const PROBE_PROTOCOL_TIMEOUT: &str = "AMARU_PROBE_PROTOCOL_TIMEOUT";
+    pub const PROBE_REQUESTED_VERSION: &str = "AMARU_PROBE_REQUESTED_VERSION";
     pub const PROBE_RETRY: &str = "AMARU_PROBE_RETRY";
     pub const S3_BUCKET: &str = "AMARU_S3_BUCKET";
     pub const S3_ENDPOINT: &str = "AMARU_S3_ENDPOINT";

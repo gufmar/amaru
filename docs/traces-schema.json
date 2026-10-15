@@ -2309,6 +2309,9 @@
         "network": {
           "type": "string"
         },
+        "observability": {
+          "type": "string"
+        },
         "peer": {
           "type": "string"
         },
@@ -2377,6 +2380,7 @@
         "db_ledger_max_extra_snapshots",
         "mempool_max_bytes",
         "network",
+        "observability",
         "peer",
         "peers_listen_on",
         "peers_max_downstream",
@@ -2431,6 +2435,87 @@
       "public": true,
       "levels": [
         "warn"
+      ]
+    },
+    "amaru::cli::peer::PROBE": {
+      "type": "object",
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "connect_timeout": {
+          "type": "string"
+        },
+        "handshake_timeout": {
+          "type": "string"
+        },
+        "protocol_timeout": {
+          "type": "string"
+        },
+        "ping": {
+          "type": "string"
+        },
+        "handshake": {
+          "type": "boolean"
+        },
+        "peer_share": {
+          "type": "boolean"
+        },
+        "ps_check": {
+          "type": "boolean"
+        },
+        "tip": {
+          "type": "boolean"
+        },
+        "observe": {
+          "type": "boolean"
+        },
+        "all": {
+          "type": "boolean"
+        },
+        "time_track": {
+          "type": "boolean"
+        },
+        "retry": {
+          "type": "string"
+        },
+        "requested_version": {
+          "type": "integer"
+        },
+        "json": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "address",
+        "network",
+        "connect_timeout",
+        "handshake_timeout",
+        "protocol_timeout",
+        "ping",
+        "handshake",
+        "peer_share",
+        "ps_check",
+        "tip",
+        "observe",
+        "all",
+        "time_track",
+        "retry",
+        "requested_version",
+        "json"
+      ],
+      "optional": [],
+      "additionalProperties": false,
+      "name": "probe",
+      "kind": "event",
+      "target": "amaru::cli::peer",
+      "description": "Effective configuration for `amaru peer probe`",
+      "public": true,
+      "levels": [
+        "info"
       ]
     },
     "amaru::cli::snapshot::CREATE": {
@@ -10124,10 +10209,13 @@
       "optional": [],
       "additionalProperties": false,
       "name": "publications_config",
-      "level": "TRACE",
+      "kind": "event",
       "target": "amaru::setup::observability",
-      "description": "Soft publications-config issue; node continues with remaining or default bags",
-      "public": true
+      "description": "Soft publications-spec issue; node continues with remaining or default bags",
+      "public": true,
+      "levels": [
+        "warn"
+      ]
     },
     "amaru::setup::peer_snapshot::EMPTY": {
       "type": "object",

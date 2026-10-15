@@ -162,7 +162,9 @@ impl<C> cbor::Encode<C> for ExperimentalValue {
 impl<'b, C> cbor::Decode<'b, C> for ExperimentalValue {
     fn decode(d: &mut cbor::Decoder<'b>, _ctx: &mut C) -> Result<Self, cbor::decode::Error> {
         match d.datatype()? {
-            cbor::data::Type::String | cbor::data::Type::StringIndef => Ok(ExperimentalValue::Text(d.str()?.to_string())),
+            cbor::data::Type::String | cbor::data::Type::StringIndef => {
+                Ok(ExperimentalValue::Text(d.str()?.to_string()))
+            }
             cbor::data::Type::Bool => Ok(ExperimentalValue::Bool(d.bool()?)),
             cbor::data::Type::Bytes | cbor::data::Type::BytesIndef => Ok(ExperimentalValue::Bytes(d.bytes()?.to_vec())),
             cbor::data::Type::Array | cbor::data::Type::ArrayIndef => {
@@ -312,9 +314,7 @@ impl<'b, C> cbor::Decode<'b, C> for OpenPayload {
         let mut buf = Vec::new();
         {
             let mut nested = cbor::Encoder::new(&mut buf);
-            payload
-                .encode_map(&mut nested, ctx)
-                .map_err(|e| cbor::decode::Error::message(e.to_string()))?;
+            payload.encode_map(&mut nested, ctx).map_err(|e| cbor::decode::Error::message(e.to_string()))?;
         }
         if buf.len() > MAX_OPEN_PAYLOAD_BYTES {
             return Err(cbor::decode::Error::message(format!(
@@ -328,7 +328,11 @@ impl<'b, C> cbor::Decode<'b, C> for OpenPayload {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum Publication {
-    Open { version: u64, snapshot_slot: u64, payload: OpenPayload },
+    Open {
+        version: u64,
+        snapshot_slot: u64,
+        payload: OpenPayload,
+    },
     Encrypted {
         version: u64,
         snapshot_slot: u64,
@@ -598,8 +602,9 @@ mod tests {
     }
 
     fn load_vector(name: &str) -> Vec<u8> {
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/observability/vectors").join(format!("{name}.hex"));
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/observability/vectors")
+            .join(format!("{name}.hex"));
         parse_hex(&std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display())))
     }
 

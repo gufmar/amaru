@@ -926,7 +926,7 @@ For information on how to use and filter these traces, see [monitoring/README.md
 | `bootstrap` | `event` | info | public | Bootstrap a node from published snapshots | db_chain, db_ledger, network | epoch |
 | `rm` | `event` | info | public | Remove ledger and chain database from disk | db_chain, db_ledger, network |  |
 | `rollback` | `event` | info | public | Roll the node databases back after a failure | db_chain, db_ledger, mode, network | anchor, best_chain, epoch, ledger_tip |
-| `run` | `span` |  | public | The effective configuration a node run starts with | db_chain, db_chain_automatic_migration, db_ledger, db_ledger_max_extra_snapshots, mempool_max_bytes, network, peer, peers_listen_on, peers_max_downstream, peers_max_upstream, peers_mix, peers_removal_cooldown_ms, peers_snapshot, peers_snapshot_relays, pid_export, submit_api_listen_on, trace_buffer, trace_buffer_dump, tui_log_retention, tui_off, tx_submission_fetch_batch_bytes, tx_submission_inflight_timeout_ms, tx_submission_insert_timeout_ms, tx_submission_max_window | era_history, global_parameters |
+| `run` | `span` |  | public | The effective configuration a node run starts with | db_chain, db_chain_automatic_migration, db_ledger, db_ledger_max_extra_snapshots, mempool_max_bytes, network, observability, peer, peers_listen_on, peers_max_downstream, peers_max_upstream, peers_mix, peers_removal_cooldown_ms, peers_snapshot, peers_snapshot_relays, pid_export, submit_api_listen_on, trace_buffer, trace_buffer_dump, tui_log_retention, tui_off, tx_submission_fetch_batch_bytes, tx_submission_inflight_timeout_ms, tx_submission_insert_timeout_ms, tx_submission_max_window | era_history, global_parameters |
 | `submit_api_shutdown_failed` | `event` | warn | public | The submit API did not stop cleanly during shutdown. Reason ∈ {join_error, timeout}. | reason | error |
 
 <details><summary>event: `bootstrap`</summary>
@@ -975,6 +975,7 @@ For information on how to use and filter these traces, see [monitoring/README.md
 | `db_ledger_max_extra_snapshots` | `string` | ✓ |
 | `mempool_max_bytes` | `string` | ✓ |
 | `network` | `string` | ✓ |
+| `observability` | `string` | ✓ |
 | `peer` | `string` | ✓ |
 | `peers_listen_on` | `string` | ✓ |
 | `peers_max_downstream` | `integer` | ✓ |
@@ -1004,6 +1005,35 @@ For information on how to use and filter these traces, see [monitoring/README.md
 | --- | --- | --- |
 | `reason` | `string` | ✓ |
 | `error` | `string` |  |
+
+</details>
+
+## target: `amaru::cli::peer`
+
+| name | kind | levels | public | description | required fields | optional fields |
+| --- | --- | --- | --- | --- | --- | --- |
+| `probe` | `event` | info | public | Effective configuration for \`amaru peer probe\` | address, network, connect_timeout, handshake_timeout, protocol_timeout, ping, handshake, peer_share, ps_check, tip, observe, all, time_track, retry, requested_version, json |  |
+
+<details><summary>event: `probe`</summary>
+
+| field | type | required |
+| --- | --- | --- |
+| `address` | `string` | ✓ |
+| `network` | `string` | ✓ |
+| `connect_timeout` | `string` | ✓ |
+| `handshake_timeout` | `string` | ✓ |
+| `protocol_timeout` | `string` | ✓ |
+| `ping` | `string` | ✓ |
+| `handshake` | `boolean` | ✓ |
+| `peer_share` | `boolean` | ✓ |
+| `ps_check` | `boolean` | ✓ |
+| `tip` | `boolean` | ✓ |
+| `observe` | `boolean` | ✓ |
+| `all` | `boolean` | ✓ |
+| `time_track` | `boolean` | ✓ |
+| `retry` | `string` | ✓ |
+| `requested_version` | `integer` | ✓ |
+| `json` | `boolean` | ✓ |
 
 </details>
 
@@ -3683,7 +3713,7 @@ For information on how to use and filter these traces, see [monitoring/README.md
 | `export_failed` | `event` | warn | public | OTLP export failed; collection may not be started for every signal | unavailable_signals |  |
 | `export_recovered` | `event` | info | public | OTLP collection recovered for previously unavailable signals | recovered_signals |  |
 | `init` | `event` | info | public | Observability stack initialization | with_open_telemetry, with_json_traces, with_colors |  |
-| `publications_config` | `event` | warn | public | Soft publications-config issue; node continues with remaining or default bags | reason, detail |  |
+| `publications_config` | `event` | warn | public | Soft publications-spec issue; node continues with remaining or default bags | reason, detail |  |
 
 <details><summary>event: `export_failed`</summary>
 
@@ -3711,7 +3741,7 @@ For information on how to use and filter these traces, see [monitoring/README.md
 
 </details>
 
-<details><summary>span: `publications_config`</summary>
+<details><summary>event: `publications_config`</summary>
 
 | field | type | required |
 | --- | --- | --- |

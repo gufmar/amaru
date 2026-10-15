@@ -293,20 +293,24 @@ pub struct Args {
     )]
     submit_api_listen_on: Option<String>,
 
-    /// Path to a TOML file describing observability publications (experimental mux 11).
+    /// Enable the experimental observability mini-protocol (mux 11) and select publications.
     ///
-    /// Only used when `AMARU_OBSERVABILITY` is set. The file selects which built-in
-    /// fields appear in which `[[publication]]` bags; it cannot override identity
-    /// values. When omitted, one open publication with every known field is installed.
-    /// Also via `AMARU_OBSERVABILITY_CONFIG`.
+    /// Repeatable. Each value is one bag: `open[:fields]` (or `o:…`) or
+    /// `enc:<64hex>:<fields>` (or `e:…`; skipped until sealed-box lands). Field lists are
+    /// comma-separated short ids (`name,maj,ver,cpu,…`) or `all`. Bare `--observability`
+    /// means `open:all`. Via env, join bags with `;`
+    /// (e.g. `AMARU_OBSERVABILITY=open:name,ver;open:cpu`).
     #[arg(
         long,
-        value_name = amaru::value_names::FILEPATH,
-        env = amaru::env_vars::OBSERVABILITY_CONFIG,
+        value_name = amaru::value_names::OBSERVABILITY,
+        env = amaru::env_vars::OBSERVABILITY,
+        num_args = 0..=1,
+        default_missing_value = "open:all",
+        action = ArgAction::Append,
         display_order = 0,
-        help_heading = "Advanced Options",
+        help_heading = "Advanced options",
     )]
-    observability_config: Option<PathBuf>,
+    observability: Vec<String>,
 
     /// Path to the PID file managed by Amaru.
     #[arg(
@@ -490,15 +494,16 @@ pub(crate) fn runnable(args: Args) -> Runnable {
 }
 
 async fn run(args: Args, meter: Meter, shutdown: ShutdownHandle) -> anyhow::Result<()> {
-    let publications = if std::env::var_os("AMARU_OBSERVABILITY").is_some() {
-        Some(amaru::observability_publications::install_for_node(args.observability_config.as_deref()))
-    } else {
+    let publications = if args.observability.is_empty() {
         None
+    } else {
+        Some(amaru::observability_publications::install_for_node(&args.observability))
     };
 
     let _pid = optional_pid_file(args.pid_export.clone());
 
     let mut config = parse_args(args)?;
+    config.observability_enabled = publications.is_some();
     let trace_dump_path = config.trace_dump_path.clone();
     let submit_api_address = config.submit_api_address()?;
     pre_flight_checks()?;
@@ -724,6 +729,11 @@ fn parse_args(args: Args) -> anyhow::Result<Config> {
         db_ledger_max_extra_snapshots = args.db_ledger_max_extra_snapshots.to_string(),
         mempool_max_bytes = &ByteSize::from_bytes(mempool.max_bytes).display_iec().to_string(),
         network,
+        observability = if args.observability.is_empty() {
+            "disabled".to_string()
+        } else {
+            amaru::observability_publications::flatten_specs(&args.observability).join(";")
+        },
         peer = args.peer.join(", "),
         peers_mix = &args.peers_mix,
         peers_removal_cooldown_ms = args.peers_removal_cooldown.as_millis() as u64,

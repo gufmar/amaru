@@ -204,11 +204,9 @@ impl TipInfo {
     pub fn from_point(point: Point) -> Self {
         match point {
             Point::Origin => Self { slot: 0, block_height: 0, hash: "origin".to_string() },
-            Point::Specific(slot, hash, height) => Self {
-                slot: slot.as_u64(),
-                block_height: height.as_u64(),
-                hash: hash.to_string(),
-            },
+            Point::Specific(slot, hash, height) => {
+                Self { slot: slot.as_u64(), block_height: height.as_u64(), hash: hash.to_string() }
+            }
         }
     }
 }
@@ -276,13 +274,10 @@ pub async fn tcp_ping(peer: Peer, timeout: Duration) -> anyhow::Result<Duration>
     Ok(rtt)
 }
 
-fn offered_versions_from_table(table: &VersionTable<amaru_protocols::protocol_messages::version_data::VersionData>) -> Vec<u64> {
-    let mut versions: Vec<u64> = table
-        .values
-        .keys()
-        .chain(table.unknown.keys())
-        .map(|v| v.as_u64())
-        .collect();
+fn offered_versions_from_table(
+    table: &VersionTable<amaru_protocols::protocol_messages::version_data::VersionData>,
+) -> Vec<u64> {
+    let mut versions: Vec<u64> = table.values.keys().chain(table.unknown.keys()).map(|v| v.as_u64()).collect();
     versions.sort_unstable();
     versions.dedup();
     versions
@@ -314,11 +309,7 @@ pub async fn run_version_query(
         peer_share_amount: 10,
     };
     let partial = run_session_inner(req, HandshakeMode::Query).await?;
-    let offered = partial
-        .handshake
-        .as_ref()
-        .map(|h| h.offered_versions.clone())
-        .unwrap_or_default();
+    let offered = partial.handshake.as_ref().map(|h| h.offered_versions.clone()).unwrap_or_default();
     if offered.is_empty() && !partial.errors.is_empty() {
         bail!(partial.errors.join("; "));
     }
@@ -350,27 +341,19 @@ async fn run_session_inner(req: SessionRequest, handshake_mode: HandshakeMode) -
             (now, now)
         });
         let mut steps = vec![mark_standalone_step(started, &mut last, "tcp_connect_start", 0, 0)];
-        let conn_id = connections
-            .connect(req.peer, req.connect_timeout)
-            .await
-            .context("TCP connect for session")?;
+        let conn_id = connections.connect(req.peer, req.connect_timeout).await.context("TCP connect for session")?;
         let (sent, recv) = connections.byte_counts(conn_id).unwrap_or((0, 0));
         steps.push(mark_standalone_step(started, &mut last, "tcp_connect_ok", sent, recv));
         let ctx = TimingCtx { started, last, connections: connections.clone(), conn_id };
         (conn_id, steps, Some(ctx))
     } else {
-        let conn_id = connections
-            .connect(req.peer, req.connect_timeout)
-            .await
-            .context("TCP connect for session")?;
+        let conn_id = connections.connect(req.peer, req.connect_timeout).await.context("TCP connect for session")?;
         (conn_id, Vec::new(), None)
     };
 
     let mut network = TokioBuilder::default();
     network.resources().put::<ConnectionsResource>(connections.clone());
-    network
-        .resources()
-        .put::<ResourceHeaderStore>(Arc::new(InMemoryChainStore::new()) as ResourceHeaderStore);
+    network.resources().put::<ResourceHeaderStore>(Arc::new(InMemoryChainStore::new()) as ResourceHeaderStore);
 
     let (report_out, mut report_rx) = network.output::<SessionPartial>("probe_report", 4);
     let driver = network.stage("probe_driver", driver_stage);
@@ -407,9 +390,7 @@ async fn run_session_inner(req: SessionRequest, handshake_mode: HandshakeMode) -
     let running = network.run(handle);
     let ping_budget = req
         .want_ping
-        .map(|(count, interval)| {
-            req.protocol_timeout * count + interval * count.saturating_sub(1)
-        })
+        .map(|(count, interval)| req.protocol_timeout * count + interval * count.saturating_sub(1))
         .unwrap_or(Duration::ZERO);
     let overall = req.handshake_timeout
         + ping_budget
@@ -506,23 +487,24 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
             let muxer = eff
                 .wire_up(
                     muxer,
-                    mux::State::new(state.conn_id, &[(PROTO_HANDSHAKE.erase(), ingress_limit(PROTO_HANDSHAKE))], Role::Initiator, state.peer),
+                    mux::State::new(
+                        state.conn_id,
+                        &[(PROTO_HANDSHAKE.erase(), ingress_limit(PROTO_HANDSHAKE))],
+                        Role::Initiator,
+                        state.peer,
+                    ),
                 )
                 .await;
 
             let versions = match state.handshake_mode {
                 HandshakeMode::Query => VersionTable::query_through(state.max_n2n_version, state.magic),
-                HandshakeMode::Accept => {
-                    VersionTable::v11_through(state.max_n2n_version, state.magic, true, true)
-                }
+                HandshakeMode::Accept => VersionTable::v11_through(state.max_n2n_version, state.magic, true, true),
             };
 
             let hs_reply = eff.me_ref().contramap(DriverMsg::Handshake);
             let hs = eff.stage("handshake", handshake::initiator()).await;
             let hs = eff.supervise(hs, DriverMsg::ChildDied);
-            let hs = eff
-                .wire_up(hs, handshake::HandshakeInitiator::new(muxer.clone(), hs_reply, versions))
-                .await;
+            let hs = eff.wire_up(hs, handshake::HandshakeInitiator::new(muxer.clone(), hs_reply, versions)).await;
 
             eff.send(
                 &muxer,
@@ -546,10 +528,7 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
                 HandshakeResult::Accepted(version, data) => {
                     if state.handshake_mode == HandshakeMode::Query {
                         mark(&mut state, "handshake_unexpected_accept");
-                        state
-                            .partial
-                            .errors
-                            .push("handshake query expected MsgQueryReply, got Accept".to_string());
+                        state.partial.errors.push("handshake query expected MsgQueryReply, got Accept".to_string());
                         return finish(state, &eff).await;
                     }
                     mark(&mut state, "handshake_ok");
@@ -658,7 +637,7 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
         DriverMsg::MuxDied => {
             let hint = match state.phase {
                 Phase::Observe => {
-                    "mux exited during observe (connection closed, or peer has no observability on mux 11; set AMARU_OBSERVABILITY=1 on Amaru)"
+                    "mux exited during observe (connection closed, or peer has no observability on mux 11; enable with amaru node run --observability)"
                 }
                 Phase::Handshaking => "mux exited during handshake",
                 Phase::Ping => "mux exited during keep-alive ping",
@@ -685,10 +664,9 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
                 Phase::Ping => ("keep-alive ping", "ping_timeout"),
                 Phase::Tip => ("tip", "tip_timeout"),
                 Phase::PeerShare => ("peershare", "peershare_timeout"),
-                Phase::Observe => (
-                    "observe (no MsgPublications; peer may lack AMARU_OBSERVABILITY / mux 11)",
-                    "observe_timeout",
-                ),
+                Phase::Observe => {
+                    ("observe (no MsgPublications; peer may lack --observability / mux 11)", "observe_timeout")
+                }
                 Phase::Done => ("done", "done_timeout"),
             };
             mark(&mut state, step);
@@ -728,25 +706,12 @@ async fn advance_after_handshake(
     finish(state, eff).await
 }
 
-async fn start_ping(
-    mut state: Driver,
-    muxer: StageRef<MuxMessage>,
-    count: u32,
-    eff: &Effects<DriverMsg>,
-) -> Driver {
+async fn start_ping(mut state: Driver, muxer: StageRef<MuxMessage>, count: u32, eff: &Effects<DriverMsg>) -> Driver {
     mark(&mut state, "ping_start");
     state.phase = Phase::Ping;
     state.pings_remaining = count.saturating_sub(1);
     let report_to = eff.me_ref().contramap(DriverMsg::Ping);
-    let ka = register_keepalive_oneshot(
-        state.peer,
-        state.conn_id,
-        &muxer,
-        report_to,
-        eff,
-        DriverMsg::ChildDied,
-    )
-    .await;
+    let ka = register_keepalive_oneshot(state.peer, state.conn_id, &muxer, report_to, eff, DriverMsg::ChildDied).await;
     state.keepalive = Some(ka.clone());
     eff.send(&ka, KaLocal::SendKeepAlive).await;
     eff.set_timeout_at(5, state.protocol_timeout, DriverMsg::StepTimeout).await;
@@ -788,15 +753,9 @@ async fn start_tip(mut state: Driver, muxer: StageRef<MuxMessage>, eff: &Effects
     mark(&mut state, "tip_start");
     state.phase = Phase::Tip;
     let pipeline = eff.me_ref().contramap(DriverMsg::Tip);
-    let _ = chainsync::register_chainsync_initiator(
-        &muxer,
-        state.peer,
-        state.conn_id,
-        pipeline,
-        eff,
-        DriverMsg::ChildDied,
-    )
-    .await;
+    let _ =
+        chainsync::register_chainsync_initiator(&muxer, state.peer, state.conn_id, pipeline, eff, DriverMsg::ChildDied)
+            .await;
     eff.set_timeout_at(2, state.protocol_timeout, DriverMsg::StepTimeout).await;
     state
 }
@@ -894,10 +853,7 @@ async fn start_observe(
     eff: &Effects<DriverMsg>,
 ) -> Driver {
     if version < VersionNumber::V16 {
-        state
-            .partial
-            .errors
-            .push(format!("observability requires N2N V16+ (negotiated {})", version.as_u64()));
+        state.partial.errors.push(format!("observability requires N2N V16+ (negotiated {})", version.as_u64()));
         mark(&mut state, "observe_skipped");
         return finish(state, eff).await;
     }
@@ -905,15 +861,9 @@ async fn start_observe(
     mark(&mut state, "observe_start");
     state.phase = Phase::Observe;
     let reply_to = eff.me_ref().contramap(DriverMsg::Observe);
-    let obs = register_observability_initiator(
-        &muxer,
-        state.peer,
-        state.conn_id,
-        Some(reply_to),
-        eff,
-        DriverMsg::ChildDied,
-    )
-    .await;
+    let obs =
+        register_observability_initiator(&muxer, state.peer, state.conn_id, Some(reply_to), eff, DriverMsg::ChildDied)
+            .await;
     eff.send(&obs, ObsLocal::GetPublications).await;
     eff.set_timeout_at(4, state.protocol_timeout, DriverMsg::StepTimeout).await;
     state
@@ -943,12 +893,8 @@ fn publications_json(message: &observability::Message) -> serde_json::Value {
             serde_json::json!({"type": "Publications", "items": items})
         }
         observability::Message::CachedPublications(_) => {
-            let items: Vec<_> = message
-                .logical_publications()
-                .unwrap_or_default()
-                .iter()
-                .map(publication_json)
-                .collect();
+            let items: Vec<_> =
+                message.logical_publications().unwrap_or_default().iter().map(publication_json).collect();
             serde_json::json!({"type": "Publications", "items": items})
         }
     }
@@ -970,12 +916,7 @@ fn publication_json(pub_: &Publication) -> serde_json::Value {
                 (k.clone(), experimental_json(v))
             }).collect::<serde_json::Map<_, _>>(),
         }),
-        Publication::Encrypted {
-            version,
-            snapshot_slot,
-            observer_public_key,
-            ciphertext,
-        } => serde_json::json!({
+        Publication::Encrypted { version, snapshot_slot, observer_public_key, ciphertext } => serde_json::json!({
             "kind": "encrypted",
             "version": version,
             "snapshot_slot": snapshot_slot,

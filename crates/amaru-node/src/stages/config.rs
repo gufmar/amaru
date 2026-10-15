@@ -106,6 +106,10 @@ pub struct Config {
     /// Block-producer secrets. `None` leaves the node a follower.
     /// When `Some`, `build_node` checks the operational certificate and wires the forge stage.
     pub forging_credentials: Option<Arc<dyn ForgingCredentials>>,
+
+    /// When true, register the experimental observability mini-protocol (mux 11) on N2N ≥ V16.
+    /// The product binary installs the publications cache provider before `build_and_run_node`.
+    pub observability_enabled: bool,
 }
 
 impl Config {
@@ -181,6 +185,7 @@ impl Default for Config {
             meter: None,
             realign_chain_store: true,
             forging_credentials: None,
+            observability_enabled: false,
         }
     }
 }

@@ -157,9 +157,7 @@ impl StageState<State, Initiator> for KeepAliveInitiator {
                             .await;
                         Ok((None, self))
                     }
-                    .instrument(
-                        debug_span!(protocols::keepalive::initiator::KEEPALIVE_INITIATOR_STAGE, cookie).into(),
-                    )
+                    .instrument(debug_span!(protocols::keepalive::initiator::KEEPALIVE_INITIATOR_STAGE, cookie).into())
                     .await
                 } else {
                     Ok((None, self))
@@ -182,11 +180,7 @@ impl StageState<State, Initiator> for KeepAliveInitiator {
                         );
                         PeerTrack::new(eff).record_keepalive_rtt(self.peer, rtt, received_at).await;
                         if let Some(report_to) = &self.report_to {
-                            eff.send(
-                                report_to,
-                                InitiatorResult::Response { cookie, round_trip: Some(rtt) },
-                            )
-                            .await;
+                            eff.send(report_to, InitiatorResult::Response { cookie, round_trip: Some(rtt) }).await;
                         }
                     }
                     self.cookie = cookie.next();
@@ -194,20 +188,13 @@ impl StageState<State, Initiator> for KeepAliveInitiator {
                         return Ok((Some(InitiatorAction::Done), self));
                     }
                     if self.auto_schedule {
-                        eff.schedule_after(
-                            Inputs::Local(InitiatorMessage::SendKeepAlive),
-                            Duration::from_secs(30),
-                        )
-                        .await;
+                        eff.schedule_after(Inputs::Local(InitiatorMessage::SendKeepAlive), Duration::from_secs(30))
+                            .await;
                     }
                     Ok((None, self))
                 }
                 .instrument(
-                    debug_span!(
-                        protocols::keepalive::initiator::KEEPALIVE_INITIATOR_STAGE,
-                        cookie = cookie_u16
-                    )
-                    .into(),
+                    debug_span!(protocols::keepalive::initiator::KEEPALIVE_INITIATOR_STAGE, cookie = cookie_u16).into(),
                 )
                 .await
             }

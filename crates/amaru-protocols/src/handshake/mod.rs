@@ -21,6 +21,7 @@ mod tests;
 use amaru_kernel::NetworkMagic;
 pub use messages::Message;
 
+pub use crate::protocol_messages::handshake::{HandshakeResult, RefuseReason};
 use crate::{
     protocol::{ProtoSpec, ProtocolState, RoleT},
     protocol_messages::{
@@ -29,8 +30,6 @@ use crate::{
         version_table::VersionTable,
     },
 };
-
-pub use crate::protocol_messages::handshake::{HandshakeResult, RefuseReason};
 
 pub fn register_deserializers() -> amaru_pure_stage::DeserializerGuards {
     vec![initiator::register_deserializers(), responder::register_deserializers()].into_iter().flatten().collect()

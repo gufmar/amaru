@@ -49,6 +49,8 @@ Other guiding principles:
 
 ### Changed
 
+- **amaru**: experimental observability publications are configured with `--observability` / `AMARU_OBSERVABILITY` (for example `open:name,ver,cpu` or `open:all`). Repeat the flag for more bags, or join bags with `;` in the env var. The previous `--observability-config` TOML file path is removed.
+- **amaru**: `amaru peer probe` option names follow EDR-0019 kebab form (`--peer-share`, `--ps-check`, `--time-track`); the previous glued names remain as aliases. Timeouts accept duration units (`5s`, `500ms`).
 - **amaru**: align command-line with the guidelines from EDR-0019; as a consequence, many options (and their corresponding environment variables) have been renamed. However, aliases are in place so that existing scripts or usage of Amaru should keep working. Yet, old options and variables are now deprecated and will be remove in the future.
 - **amaru**: remove legacy commands that were deprecated and hidden away months ago.
 - **amaru**: the operational certificate for block forging is passed with `--operator-cert` (or `AMARU_OPERATOR_CERT`). The legacy `--operational-certificate` and `AMARU_OPERATIONAL_CERTIFICATE` are still accepted.

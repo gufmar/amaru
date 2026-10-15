@@ -230,8 +230,7 @@ pub(crate) mod tests {
     #[test]
     fn v11_and_above_offers_current_version() {
         let table = VersionTable::v11_and_above(NetworkMagic::PREPROD, true, true);
-        let expected: Vec<_> =
-            VersionNumber::SUPPORTED.into_iter().filter(|v| *v <= VersionNumber::CURRENT).collect();
+        let expected: Vec<_> = VersionNumber::SUPPORTED.into_iter().filter(|v| *v <= VersionNumber::CURRENT).collect();
         assert_eq!(table.values.keys().copied().collect::<Vec<_>>(), expected);
         assert_eq!(table.values.keys().next_back().copied(), Some(VersionNumber::CURRENT));
         assert!(!table.values.contains_key(&VersionNumber::V16));

@@ -117,13 +117,7 @@ impl VersionData {
         query: bool,
         peras_support: bool,
     ) -> Self {
-        VersionData {
-            network_magic,
-            initiator_only_diffusion_mode,
-            peer_sharing,
-            query,
-            peras_support,
-        }
+        VersionData { network_magic, initiator_only_diffusion_mode, peer_sharing, query, peras_support }
     }
 
     pub fn network_magic(&self) -> NetworkMagic {
@@ -180,11 +174,7 @@ impl Display for VersionData {
         write!(
             f,
             "{{ network_magic: {}, initiator_only_diffusion_mode: {}, peer_sharing: {}, query: {}, peras_support: {} }}",
-            self.network_magic,
-            self.initiator_only_diffusion_mode,
-            self.peer_sharing,
-            self.query,
-            self.peras_support
+            self.network_magic, self.initiator_only_diffusion_mode, self.peer_sharing, self.query, self.peras_support
         )
     }
 }
@@ -233,13 +223,7 @@ impl<'b, T: AsRef<VersionNumber>> cbor::Decode<'b, T> for VersionData {
             let initiator_only_diffusion_mode = d.bool()?;
             let peer_sharing = d.decode()?;
             let query = d.bool()?;
-            Ok(Self {
-                network_magic,
-                initiator_only_diffusion_mode,
-                peer_sharing,
-                query,
-                peras_support: false,
-            })
+            Ok(Self { network_magic, initiator_only_diffusion_mode, peer_sharing, query, peras_support: false })
         } else {
             let len = d.array()?;
             cbor::check_tagged_array_length(0, len, 2)?;

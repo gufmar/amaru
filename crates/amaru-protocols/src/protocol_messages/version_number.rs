@@ -54,8 +54,7 @@ impl VersionNumber {
     /// Versions this node can encode, in ascending order.
     ///
     /// Extend this list when Amaru gains a new N2N VersionData codec; [`HIGHEST`] follows automatically.
-    pub const SUPPORTED: [VersionNumber; 6] =
-        [Self::V11, Self::V12, Self::V13, Self::V14, Self::V15, Self::V16];
+    pub const SUPPORTED: [VersionNumber; 6] = [Self::V11, Self::V12, Self::V13, Self::V14, Self::V15, Self::V16];
 
     /// Highest N2N version this stack knows how to speak (last entry of [`SUPPORTED`]).
     ///

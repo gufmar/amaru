@@ -20,7 +20,7 @@ use crate::{
     mux::MuxMessage,
     observability::{State, messages::Message},
     protocol::{
-        Inputs, Miniprotocol, Outcome, PROTO_N2N_OBSERVABILITY, ProtocolState, Initiator, StageState, miniprotocol,
+        Initiator, Inputs, Miniprotocol, Outcome, PROTO_N2N_OBSERVABILITY, ProtocolState, StageState, miniprotocol,
         outcome,
     },
 };
@@ -81,9 +81,7 @@ impl StageState<State, Initiator> for ObservabilityInitiator {
         _eff: &Effects<Inputs<Self::LocalIn>>,
     ) -> anyhow::Result<(Option<InitiatorAction>, Self)> {
         match (proto, input) {
-            (State::Idle, InitiatorMessage::GetPublications) => {
-                Ok((Some(InitiatorAction::GetPublications), self))
-            }
+            (State::Idle, InitiatorMessage::GetPublications) => Ok((Some(InitiatorAction::GetPublications), self)),
             (state, input) => anyhow::bail!("observability initiator local: {state:?} <- {input:?}"),
         }
     }
