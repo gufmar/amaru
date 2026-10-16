@@ -1026,7 +1026,7 @@ For information on how to use and filter these traces, see [monitoring/README.md
 | `ping` | `string` | ✓ |
 | `handshake` | `boolean` | ✓ |
 | `peer_share` | `boolean` | ✓ |
-| `ps_check` | `boolean` | ✓ |
+| `ps_check` | `string` | ✓ |
 | `tip` | `boolean` | ✓ |
 | `observe` | `boolean` | ✓ |
 | `all` | `boolean` | ✓ |

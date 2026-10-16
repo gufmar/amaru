@@ -1802,7 +1802,8 @@ define_schemas! {
                     required ping: String
                     required handshake: bool
                     required peer_share: bool
-                    required ps_check: bool
+                    /// `off`, `handshake`, or semicolon-joined extras (`ping;tip;observe`)
+                    required ps_check: String
                     required tip: bool
                     required observe: bool
                     required all: bool

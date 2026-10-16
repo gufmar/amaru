@@ -2465,7 +2465,7 @@
           "type": "boolean"
         },
         "ps_check": {
-          "type": "boolean"
+          "type": "string"
         },
         "tip": {
           "type": "boolean"

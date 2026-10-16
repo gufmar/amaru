@@ -19,7 +19,9 @@ use std::{
 
 use amaru_kernel::{NetworkName, Peer, Point};
 use amaru_network::connection::TokioConnections;
-use amaru_ouroboros::{ConnectionProvider, ConnectionsResource, in_memory_chain_store::InMemoryChainStore};
+use amaru_ouroboros::{
+    ConnectionProvider, ConnectionsResource, PeerTrackingResource, in_memory_chain_store::InMemoryChainStore,
+};
 use amaru_protocols::{
     chainsync::{self, ChainSyncInitiatorMsg, InitiatorMessage as CsLocal, InitiatorResult as CsResult},
     deserializers,
@@ -30,6 +32,7 @@ use amaru_protocols::{
         self, InitiatorMessage as ObsLocal, InitiatorResult as ObsResult, Publication, register_observability_initiator,
     },
     peer_sharing::{ShareResult, register_peer_sharing_initiator_oneshot},
+    peer_tracking::InMemoryPeerTracking,
     protocol::{Inputs, PROTO_HANDSHAKE, Role, ingress_limit},
     protocol_messages::{version_data::PeerSharing, version_number::VersionNumber, version_table::VersionTable},
     store_effects::ResourceHeaderStore,
@@ -242,14 +245,217 @@ pub struct ProbeReport {
     pub errors: Vec<String>,
 }
 
+/// Stage at which a `--ps-check` attempt failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PsCheckFailedAt {
+    Tcp,
+    Handshake,
+    Ping,
+    Tip,
+    PeerShare,
+    Observe,
+}
+
+impl PsCheckFailedAt {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Tcp => "tcp",
+            Self::Handshake => "handshake",
+            Self::Ping => "ping",
+            Self::Tip => "tip",
+            Self::PeerShare => "peer_share",
+            Self::Observe => "observe",
+        }
+    }
+}
+
+impl std::fmt::Display for PsCheckFailedAt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Classify a probe session / connect error message into a failure stage.
+pub fn classify_failure(message: &str) -> PsCheckFailedAt {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("tcp connect") || lower.contains("invalid peer address") {
+        return PsCheckFailedAt::Tcp;
+    }
+    if lower.contains("keep-alive") || lower.contains("ping timed out") || lower.contains("during keep-alive") {
+        return PsCheckFailedAt::Ping;
+    }
+    if lower.contains("tip timed out") || lower.contains("during tip") || lower.contains("chainsync") {
+        return PsCheckFailedAt::Tip;
+    }
+    if lower.contains("peershare") || lower.contains("peer-share") || lower.contains("peer_share") {
+        return PsCheckFailedAt::PeerShare;
+    }
+    if lower.contains("observe") || lower.contains("observability") {
+        return PsCheckFailedAt::Observe;
+    }
+    // Handshake refuse/timeout/mux, or outer session timeout with no finer hint.
+    PsCheckFailedAt::Handshake
+}
+
+/// Which post-handshake mini-protocols a ps-check should run (on the same TCP session).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PsCheckExtras {
+    pub ping: bool,
+    pub tip: bool,
+    pub peer_share: bool,
+    pub observe: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PeerCheck {
     pub address: String,
     pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_at: Option<PsCheckFailedAt>,
     pub detail: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ping_rtt_ms: Option<u64>,
+    pub negotiated_version: Option<u64>,
+    /// Keep-alive RTTs in milliseconds when ping was requested.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ping_rtts_ms: Vec<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tip: Option<TipInfo>,
+    /// Peer-share addresses from this check only (never recursively ps-checked).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peers: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub publications: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timetrack: Vec<TimeTrackStep>,
+}
+
+impl PeerCheck {
+    pub fn hard_failure(address: impl Into<String>, detail: impl Into<String>) -> Self {
+        let detail = detail.into();
+        let failed_at = classify_failure(&detail);
+        Self {
+            address: address.into(),
+            ok: false,
+            failed_at: Some(failed_at),
+            detail,
+            negotiated_version: None,
+            ping_rtts_ms: Vec::new(),
+            tip: None,
+            peers: None,
+            publications: None,
+            timetrack: Vec::new(),
+        }
+    }
+
+    /// Build a check result from a completed Accept-mode session.
+    pub fn from_session(address: impl Into<String>, partial: SessionPartial, extras: PsCheckExtras) -> Self {
+        let address = address.into();
+        let negotiated_version = partial.handshake.as_ref().and_then(|h| h.version);
+        let handshake_ok = negotiated_version.is_some();
+
+        if let Some(err) = partial.errors.first() {
+            let failed_at = classify_failure(err);
+            return Self {
+                address,
+                ok: false,
+                failed_at: Some(failed_at),
+                detail: err.clone(),
+                negotiated_version,
+                ping_rtts_ms: partial.ping_rtts_ms,
+                tip: partial.tip,
+                peers: partial.peers,
+                publications: partial.publications,
+                timetrack: partial.timetrack,
+            };
+        }
+
+        if !handshake_ok {
+            return Self {
+                address,
+                ok: false,
+                failed_at: Some(PsCheckFailedAt::Handshake),
+                detail: "handshake did not Accept".to_string(),
+                negotiated_version: None,
+                ping_rtts_ms: partial.ping_rtts_ms,
+                tip: partial.tip,
+                peers: partial.peers,
+                publications: partial.publications,
+                timetrack: partial.timetrack,
+            };
+        }
+
+        // Requested extras must produce their results (empty peer-share list is still success).
+        if extras.ping && partial.ping_rtts_ms.is_empty() {
+            return Self {
+                address,
+                ok: false,
+                failed_at: Some(PsCheckFailedAt::Ping),
+                detail: "no keep-alive ping response".to_string(),
+                negotiated_version,
+                ping_rtts_ms: partial.ping_rtts_ms,
+                tip: partial.tip,
+                peers: partial.peers,
+                publications: partial.publications,
+                timetrack: partial.timetrack,
+            };
+        }
+        if extras.tip && partial.tip.is_none() {
+            return Self {
+                address,
+                ok: false,
+                failed_at: Some(PsCheckFailedAt::Tip),
+                detail: "no tip".to_string(),
+                negotiated_version,
+                ping_rtts_ms: partial.ping_rtts_ms,
+                tip: None,
+                peers: partial.peers,
+                publications: partial.publications,
+                timetrack: partial.timetrack,
+            };
+        }
+        if extras.peer_share && partial.peers.is_none() {
+            return Self {
+                address,
+                ok: false,
+                failed_at: Some(PsCheckFailedAt::PeerShare),
+                detail: "peer-share not negotiated or no reply".to_string(),
+                negotiated_version,
+                ping_rtts_ms: partial.ping_rtts_ms,
+                tip: partial.tip,
+                peers: None,
+                publications: partial.publications,
+                timetrack: partial.timetrack,
+            };
+        }
+        if extras.observe && partial.publications.is_none() {
+            return Self {
+                address,
+                ok: false,
+                failed_at: Some(PsCheckFailedAt::Observe),
+                detail: "no publications".to_string(),
+                negotiated_version,
+                ping_rtts_ms: partial.ping_rtts_ms,
+                tip: partial.tip,
+                peers: partial.peers,
+                publications: None,
+                timetrack: partial.timetrack,
+            };
+        }
+
+        Self {
+            address,
+            ok: true,
+            failed_at: None,
+            detail: "handshake ok".to_string(),
+            negotiated_version,
+            ping_rtts_ms: partial.ping_rtts_ms,
+            tip: partial.tip,
+            peers: partial.peers,
+            publications: partial.publications,
+            timetrack: partial.timetrack,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Default)]
@@ -263,15 +469,6 @@ pub struct SessionPartial {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub timetrack: Vec<TimeTrackStep>,
     pub errors: Vec<String>,
-}
-
-pub async fn tcp_ping(peer: Peer, timeout: Duration) -> anyhow::Result<Duration> {
-    let connections = Arc::new(TokioConnections::new(65535));
-    let started = Instant::now();
-    let conn_id = connections.connect(peer, timeout).await.context("TCP connect")?;
-    let rtt = started.elapsed();
-    let _ = connections.close(conn_id).await;
-    Ok(rtt)
 }
 
 fn offered_versions_from_table(
@@ -354,6 +551,8 @@ async fn run_session_inner(req: SessionRequest, handshake_mode: HandshakeMode) -
     let mut network = TokioBuilder::default();
     network.resources().put::<ConnectionsResource>(connections.clone());
     network.resources().put::<ResourceHeaderStore>(Arc::new(InMemoryChainStore::new()) as ResourceHeaderStore);
+    // Keep-alive (and peer-share) record via PeerTrack; probe has no real tracker.
+    network.resources().put::<PeerTrackingResource>(Arc::new(InMemoryPeerTracking::new()) as PeerTrackingResource);
 
     let (report_out, mut report_rx) = network.output::<SessionPartial>("probe_report", 4);
     let driver = network.stage("probe_driver", driver_stage);
@@ -938,7 +1137,9 @@ fn experimental_json(value: &observability::ExperimentalValue) -> serde_json::Va
 
 #[cfg(test)]
 mod tests {
-    use super::civil_from_days;
+    use super::{
+        HandshakeInfo, PeerCheck, PsCheckExtras, PsCheckFailedAt, SessionPartial, civil_from_days, classify_failure,
+    };
 
     #[test]
     fn unix_epoch_day_zero() {
@@ -949,5 +1150,39 @@ mod tests {
     fn known_date() {
         // 2000-01-01 = 10957 days since Unix epoch.
         assert_eq!(civil_from_days(10957), (2000, 1, 1));
+    }
+
+    #[test]
+    fn classify_failure_maps_known_stages() {
+        assert_eq!(classify_failure("TCP connect for session: timed out"), PsCheckFailedAt::Tcp);
+        assert_eq!(classify_failure("handshake timed out"), PsCheckFailedAt::Handshake);
+        assert_eq!(classify_failure("keep-alive ping timed out"), PsCheckFailedAt::Ping);
+        assert_eq!(classify_failure("tip timed out"), PsCheckFailedAt::Tip);
+        assert_eq!(classify_failure("peershare timed out"), PsCheckFailedAt::PeerShare);
+        assert_eq!(classify_failure("observe (no MsgPublications) timed out"), PsCheckFailedAt::Observe);
+    }
+
+    #[test]
+    fn peer_check_handshake_only_ok() {
+        let partial = SessionPartial {
+            handshake: Some(HandshakeInfo { version: Some(14), ..HandshakeInfo::default() }),
+            ..SessionPartial::default()
+        };
+        let check = PeerCheck::from_session("1.2.3.4:3001", partial, PsCheckExtras::default());
+        assert!(check.ok);
+        assert_eq!(check.negotiated_version, Some(14));
+        assert!(check.failed_at.is_none());
+    }
+
+    #[test]
+    fn peer_check_observe_extra_requires_publications() {
+        let partial = SessionPartial {
+            handshake: Some(HandshakeInfo { version: Some(16), ..HandshakeInfo::default() }),
+            ..SessionPartial::default()
+        };
+        let extras = PsCheckExtras { observe: true, ..PsCheckExtras::default() };
+        let check = PeerCheck::from_session("1.2.3.4:3001", partial, extras);
+        assert!(!check.ok);
+        assert_eq!(check.failed_at, Some(PsCheckFailedAt::Observe));
     }
 }

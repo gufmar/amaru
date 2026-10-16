@@ -56,10 +56,11 @@ pub struct Args {
 
     /// TCP connect timeout.
     #[arg(
-        long = "connect-timeout",
+        long = "timeout-connect",
+        alias = "connect-timeout",
         value_name = amaru::value_names::DURATION,
         value_parser = duration::parse,
-        env = amaru::env_vars::PROBE_CONNECT_TIMEOUT,
+        env = amaru::env_vars::PROBE_TIMEOUT_CONNECT,
         default_value = "5s",
         display_order = 0,
     )]
@@ -67,21 +68,23 @@ pub struct Args {
 
     /// Handshake mini-protocol timeout.
     #[arg(
-        long = "handshake-timeout",
+        long = "timeout-handshake",
+        alias = "handshake-timeout",
         value_name = amaru::value_names::DURATION,
         value_parser = duration::parse,
-        env = amaru::env_vars::PROBE_HANDSHAKE_TIMEOUT,
+        env = amaru::env_vars::PROBE_TIMEOUT_HANDSHAKE,
         default_value = "10s",
         display_order = 0,
     )]
     handshake_timeout: Duration,
 
-    /// Timeout for chainsync / peer-share / observability replies.
+    /// Timeout for chainsync / peer-share / observability / keep-alive replies.
     #[arg(
-        long = "protocol-timeout",
+        long = "timeout-protocol",
+        alias = "protocol-timeout",
         value_name = amaru::value_names::DURATION,
         value_parser = duration::parse,
-        env = amaru::env_vars::PROBE_PROTOCOL_TIMEOUT,
+        env = amaru::env_vars::PROBE_TIMEOUT_PROTOCOL,
         default_value = "15s",
         display_order = 0,
     )]
@@ -108,9 +111,22 @@ pub struct Args {
     #[arg(long = "peer-share", alias = "peershare", display_order = 0)]
     peer_share: bool,
 
-    /// After peer-share, TCP-ping (and observe) each returned peer.
-    #[arg(long = "ps-check", alias = "pscheck", display_order = 0)]
-    ps_check: bool,
+    /// After peer-share, check each returned peer on one TCP session (connect + N2N handshake).
+    ///
+    /// Bare `--ps-check` stops after a successful Accept. Optional semicolon-separated extras
+    /// run on the same connection after handshake: `ping`, `tip`, `peer-share` (`peershare`),
+    /// `observe` (e.g. `--ps-check tip;observe`). Peer-share extras report returned addresses
+    /// but those addresses are not ps-checked again (one level only). Uses the same timeouts,
+    /// `--requested-version`, `--time-track`, and `--retry` as the primary probe.
+    #[arg(
+        long = "ps-check",
+        alias = "pscheck",
+        num_args = 0..=1,
+        default_missing_value = "",
+        value_name = "TESTS",
+        display_order = 0,
+    )]
+    ps_check: Option<PsCheckSpec>,
 
     /// Query tip via chain-sync FindIntersect(Origin).
     #[arg(long, display_order = 0)]
@@ -120,7 +136,7 @@ pub struct Args {
     #[arg(long, display_order = 0)]
     observe: bool,
 
-    /// Run ping, handshake, tip, peer-share, and observe (then ps-check if peers are returned).
+    /// Run ping, handshake, tip, peer-share, and observe (then bare ps-check if peers are returned).
     #[arg(long, display_order = 0)]
     all: bool,
 
@@ -145,8 +161,10 @@ pub struct Args {
 
     /// Highest N2N version to offer in the handshake (default: highest Amaru can speak).
     ///
-    /// Proposes every Amaru-supported version from 11 through this value. Must be a
-    /// version Amaru implements (today: 11..=16).
+    /// Proposes every Amaru-supported version from 11 through this value. The remote may
+    /// Accept any offered version at or below this ceiling; a lower negotiated version is
+    /// success, not a failure. Must be a version Amaru implements (today: 11..=16).
+    /// Applies to the primary probe and to each `--ps-check` session.
     #[arg(
         long = "requested-version",
         alias = "requestedVersion",
@@ -175,6 +193,62 @@ impl FromStr for PingSpec {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (count, interval) = parse_count_interval(s, Duration::from_secs(1), "ping", 1, 86400)?;
         Ok(Self { count, interval })
+    }
+}
+
+/// Optional post-handshake tests for `--ps-check` (semicolon-separated).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct PsCheckSpec {
+    extras: session::PsCheckExtras,
+}
+
+impl PsCheckSpec {
+    fn display(&self) -> String {
+        let mut parts = Vec::new();
+        if self.extras.ping {
+            parts.push("ping");
+        }
+        if self.extras.tip {
+            parts.push("tip");
+        }
+        if self.extras.peer_share {
+            parts.push("peer-share");
+        }
+        if self.extras.observe {
+            parts.push("observe");
+        }
+        if parts.is_empty() { "handshake".to_string() } else { parts.join(";") }
+    }
+}
+
+impl FromStr for PsCheckSpec {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut extras = session::PsCheckExtras::default();
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            return Ok(Self { extras });
+        }
+        for raw in trimmed.split(';') {
+            let token = raw.trim();
+            if token.is_empty() {
+                continue;
+            }
+            match token.to_ascii_lowercase().as_str() {
+                "ping" => extras.ping = true,
+                "tip" => extras.tip = true,
+                "peer-share" | "peershare" => extras.peer_share = true,
+                "observe" => extras.observe = true,
+                other => {
+                    return Err(format!(
+                        "unknown --ps-check test '{other}'; expected ping, tip, peer-share, observe \
+                         (semicolon-separated)"
+                    ));
+                }
+            }
+        }
+        Ok(Self { extras })
     }
 }
 
@@ -257,7 +331,7 @@ struct Actions {
     ping: Option<PingSpec>,
     handshake: bool,
     peer_share: bool,
-    ps_check: bool,
+    ps_check: Option<PsCheckSpec>,
     tip: bool,
     observe: bool,
 }
@@ -269,7 +343,7 @@ impl Actions {
                 ping: Some(PingSpec { count: 1, interval: Duration::from_secs(1) }),
                 handshake: true,
                 peer_share: true,
-                ps_check: true,
+                ps_check: Some(PsCheckSpec::default()),
                 tip: true,
                 observe: true,
             };
@@ -277,20 +351,24 @@ impl Actions {
         let mut actions = Self {
             ping: args.ping,
             handshake: args.handshake,
-            peer_share: args.peer_share || args.ps_check,
+            peer_share: args.peer_share || args.ps_check.is_some(),
             ps_check: args.ps_check,
             tip: args.tip,
             observe: args.observe,
         };
         if actions.ping.is_none()
-            && !(actions.handshake || actions.peer_share || actions.ps_check || actions.tip || actions.observe)
+            && !(actions.handshake
+                || actions.peer_share
+                || actions.ps_check.is_some()
+                || actions.tip
+                || actions.observe)
         {
             // Default: full probe when no action flag is given.
             actions = Self {
                 ping: Some(PingSpec { count: 1, interval: Duration::from_secs(1) }),
                 handshake: true,
                 peer_share: true,
-                ps_check: false,
+                ps_check: None,
                 tip: true,
                 observe: true,
             };
@@ -331,7 +409,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             .unwrap_or_else(|| "off".to_string()),
         handshake = actions.handshake,
         peer_share = actions.peer_share,
-        ps_check = actions.ps_check,
+        ps_check = actions.ps_check.map(|s| s.display()).unwrap_or_else(|| "off".to_string()),
         tip = actions.tip,
         observe = actions.observe,
         all = args.all,
@@ -474,19 +552,23 @@ async fn run(args: Args) -> anyhow::Result<()> {
         print_timetrack_section(&report.timetrack, color);
     }
 
-    if actions.ps_check {
+    if let Some(ps_spec) = actions.ps_check {
         let peers = report.peers.clone().unwrap_or_default();
         let mut pscheck_header = stream && !peers.is_empty();
+        let ps_params = PsCheckParams {
+            network: args.network,
+            connect_timeout,
+            handshake_timeout,
+            protocol_timeout,
+            max_n2n_version,
+            extras: ps_spec.extras,
+            time_track: args.time_track,
+        };
         for addr in peers {
-            let check = run_pscheck_one(
-                &addr,
-                args.network,
-                connect_timeout,
-                handshake_timeout,
-                protocol_timeout,
-                max_n2n_version,
-            )
-            .await;
+            let check = match with_retries(args.retry, || run_pscheck_one(&addr, ps_params)).await {
+                Ok(check) => check,
+                Err(err) => session::PeerCheck::hard_failure(&addr, format!("{err:#}")),
+            };
             if stream {
                 if pscheck_header {
                     let (ok, _, _, _, _, reset) = color_palette(color);
@@ -514,79 +596,46 @@ async fn run(args: Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_pscheck_one(
-    addr: &str,
+/// Shared probe settings applied to each `--ps-check` session.
+#[derive(Debug, Clone, Copy)]
+struct PsCheckParams {
     network: NetworkName,
     connect_timeout: Duration,
     handshake_timeout: Duration,
     protocol_timeout: Duration,
     max_n2n_version: VersionNumber,
-) -> session::PeerCheck {
+    extras: session::PsCheckExtras,
+    time_track: bool,
+}
+
+/// One TCP connect + handshake (+ optional extras). Hard connect/session errors are `Err`
+/// so `--retry` can re-attempt; soft handshake/protocol failures are `Ok` with `ok: false`.
+async fn run_pscheck_one(addr: &str, params: PsCheckParams) -> anyhow::Result<session::PeerCheck> {
     let Ok(peer) = addr.parse::<Peer>() else {
-        return session::PeerCheck {
-            address: addr.to_string(),
-            ok: false,
-            detail: "invalid peer address from share".to_string(),
-            ping_rtt_ms: None,
-            publications: None,
-        };
+        // Not retryable: address came from peer-share encoding.
+        return Ok(session::PeerCheck::hard_failure(addr, "invalid peer address from share"));
     };
 
-    let ping_rtt_ms = match session::tcp_ping(peer, connect_timeout).await {
-        Ok(rtt) => Some(rtt.as_millis() as u64),
-        Err(err) => {
-            return session::PeerCheck {
-                address: addr.to_string(),
-                ok: false,
-                detail: format!("ping failed: {err:#}"),
-                ping_rtt_ms: None,
-                publications: None,
-            };
-        }
-    };
-
-    match session::run_session(session::SessionRequest {
+    // Peer-share extras are reported on this check only; callers never enqueue those peers
+    // for another ps-check (one discovery level).
+    let partial = session::run_session(session::SessionRequest {
         peer,
-        network,
-        connect_timeout,
-        handshake_timeout,
-        protocol_timeout,
-        want_peershare: false,
-        want_tip: false,
-        want_observe: true,
-        want_ping: None,
-        want_timetrack: false,
+        network: params.network,
+        connect_timeout: params.connect_timeout,
+        handshake_timeout: params.handshake_timeout,
+        protocol_timeout: params.protocol_timeout,
+        want_peershare: params.extras.peer_share,
+        want_tip: params.extras.tip,
+        want_observe: params.extras.observe,
+        want_ping: params.extras.ping.then_some((1, Duration::from_secs(1))),
+        want_timetrack: params.time_track,
         timetrack_continue: None,
-        max_n2n_version,
+        max_n2n_version: params.max_n2n_version,
         peer_share_amount: 10,
     })
-    .await
-    {
-        Ok(partial) => {
-            let ok = partial.publications.is_some() && partial.errors.is_empty();
-            let detail = if ok {
-                "observe ok".to_string()
-            } else if let Some(err) = partial.errors.first() {
-                err.clone()
-            } else {
-                "no publications".to_string()
-            };
-            session::PeerCheck {
-                address: addr.to_string(),
-                ok,
-                detail,
-                ping_rtt_ms,
-                publications: partial.publications,
-            }
-        }
-        Err(err) => session::PeerCheck {
-            address: addr.to_string(),
-            ok: false,
-            detail: format!("{err:#}"),
-            ping_rtt_ms,
-            publications: None,
-        },
-    }
+    .await?;
+
+    Ok(session::PeerCheck::from_session(addr, partial, params.extras))
 }
 
 fn emit(report: &session::ProbeReport, json: bool, color: bool) -> anyhow::Result<()> {
@@ -675,9 +724,7 @@ fn print_session_sections(report: &session::ProbeReport, color: bool, include_ps
         } else {
             println!("  {ok}peershare{reset}  {} peer(s)", peers.len());
             for p in peers {
-                if include_pscheck
-                    && let Some(check) = report.peer_checks.iter().find(|c| c.address == *p)
-                {
+                if include_pscheck && let Some(check) = report.peer_checks.iter().find(|c| c.address == *p) {
                     print_peershare_check_line(p, check, ok, warn, reset);
                     continue;
                 }
@@ -705,37 +752,63 @@ fn print_session_sections(report: &session::ProbeReport, color: bool, include_ps
     flush_stdout();
 }
 
-fn print_peershare_check_line(addr: &str, check: &session::PeerCheck, ok: &str, warn: &str, reset: &str) {
-    let ping = match check.ping_rtt_ms {
-        Some(ms) => format!("{ms} ms"),
-        None => "ping failed".to_string(),
-    };
-    let tag = if check.ok { ok } else { warn };
-    println!("    {addr}  {ping}  {tag}{}{reset}", check.detail);
-    if let Some(pubs) = &check.publications {
-        println!("      observe {addr}");
-        print_publications_human(pubs, "        ");
+fn format_pscheck_summary(check: &session::PeerCheck) -> String {
+    let version = check.negotiated_version.map(|v| format!(" v{v}")).unwrap_or_default();
+    if check.ok {
+        format!("ok handshake{version}")
+    } else {
+        let stage = check.failed_at.map(|s| s.as_str()).unwrap_or("unknown");
+        format!("fail {stage}: {}", check.detail)
     }
+}
+
+fn print_pscheck_details(check: &session::PeerCheck, indent: &str) {
+    if !check.ping_rtts_ms.is_empty() {
+        let samples =
+            check.ping_rtts_ms.iter().map(|ms| format!("{} ms", format_rtt_ms(*ms))).collect::<Vec<_>>().join(", ");
+        println!("{indent}ping:             {samples}");
+    }
+    if let Some(tip) = &check.tip {
+        println!("{indent}tip slot:         {}", tip.slot);
+        println!("{indent}tip height:       {}", tip.block_height);
+        println!("{indent}tip hash:         {}", tip.hash);
+    }
+    if let Some(peers) = &check.peers {
+        println!("{indent}peershare:        {} peer(s) (not recursively checked)", peers.len());
+        for p in peers {
+            println!("{indent}  {p}");
+        }
+    }
+    if let Some(pubs) = &check.publications {
+        println!("{indent}observe:");
+        print_publications_human(pubs, &format!("{indent}  "));
+    }
+    if !check.timetrack.is_empty() {
+        println!("{indent}timetrack:");
+        for s in &check.timetrack {
+            println!("{indent}  {:<22} {:>10} {:>10}", s.step, s.delta_ms, s.elapsed_ms);
+        }
+    }
+}
+
+fn print_peershare_check_line(addr: &str, check: &session::PeerCheck, ok: &str, warn: &str, reset: &str) {
+    let tag = if check.ok { ok } else { warn };
+    println!("    {addr}  {tag}{}{reset}", format_pscheck_summary(check));
+    print_pscheck_details(check, "      ");
 }
 
 fn print_orphan_pscheck(check: &session::PeerCheck, ok: &str, warn: &str, reset: &str) {
     let tag = if check.ok { ok } else { warn };
-    let ping = check.ping_rtt_ms.map(|ms| format!("{ms} ms")).unwrap_or_else(|| "-".to_string());
-    println!("  {tag}pscheck{reset}  {}  ping {ping}  {}", check.address, check.detail);
-    if let Some(pubs) = &check.publications {
-        print_publications_human(pubs, "           ");
-    }
+    println!("  {tag}pscheck{reset}  {}  {}", check.address, format_pscheck_summary(check));
+    print_pscheck_details(check, "           ");
 }
 
 /// Live line for one finished pscheck (human streaming mode).
 fn print_pscheck_progress(check: &session::PeerCheck, color: bool) {
     let (ok, warn, _, _, _, reset) = color_palette(color);
     let tag = if check.ok { ok } else { warn };
-    let ping = check.ping_rtt_ms.map(|ms| format!("{ms} ms")).unwrap_or_else(|| "-".to_string());
-    println!("    {}  ping {ping}  {tag}{}{reset}", check.address, check.detail);
-    if let Some(pubs) = &check.publications {
-        print_publications_human(pubs, "      ");
-    }
+    println!("    {}  {tag}{}{reset}", check.address, format_pscheck_summary(check));
+    print_pscheck_details(check, "      ");
     flush_stdout();
 }
 
@@ -898,6 +971,35 @@ fn resolve_requested_version(raw: u64) -> anyhow::Result<VersionNumber> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ps_check_spec_bare_is_handshake_only() {
+        let spec: PsCheckSpec = "".parse().unwrap();
+        assert_eq!(spec.extras, session::PsCheckExtras::default());
+        assert_eq!(spec.display(), "handshake");
+    }
+
+    #[test]
+    fn ps_check_spec_parses_semicolon_extras() {
+        let spec: PsCheckSpec = "ping;tip;peer-share;observe".parse().unwrap();
+        assert!(spec.extras.ping);
+        assert!(spec.extras.tip);
+        assert!(spec.extras.peer_share);
+        assert!(spec.extras.observe);
+        assert_eq!(spec.display(), "ping;tip;peer-share;observe");
+    }
+
+    #[test]
+    fn ps_check_spec_accepts_peershare_alias() {
+        let spec: PsCheckSpec = "peershare".parse().unwrap();
+        assert!(spec.extras.peer_share);
+    }
+
+    #[test]
+    fn ps_check_spec_rejects_unknown_token() {
+        let err = "tip;foo".parse::<PsCheckSpec>().unwrap_err();
+        assert!(err.contains("unknown"));
+    }
 
     #[test]
     fn retry_spec_parses_count_and_interval() {
