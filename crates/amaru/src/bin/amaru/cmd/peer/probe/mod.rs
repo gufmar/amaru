@@ -472,7 +472,19 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     }
                 }
             }
-            Err(err) => report.errors.push(format!("handshake query: {err:#}")),
+            Err(err) => {
+                // Soft when a session Accept will follow: the query connection is separate and
+                // flaky under load; negotiated version still comes from the Accept handshake.
+                if actions.needs_session() {
+                    let (_, _, err_c, _, _, reset) = color_palette(color);
+                    if stream {
+                        println!("  {err_c}warn{reset}    handshake query: {err:#}");
+                        flush_stdout();
+                    }
+                } else {
+                    report.errors.push(format!("handshake query: {err:#}"));
+                }
+            }
         }
         if stream && !actions.needs_session() {
             if let Some(hs) = &report.handshake {
@@ -916,18 +928,18 @@ fn print_publication_item(item: &serde_json::Value, indent: &str) {
     ];
     for key in keys {
         if let Some(v) = obj.get(key) {
+            if v.is_null() {
+                continue;
+            }
             let rendered = match v {
                 serde_json::Value::String(s) => s.clone(),
-                serde_json::Value::Null => "null".to_string(),
                 other => other.to_string(),
             };
             println!("{indent}{key:<18} {rendered}");
         }
     }
     if let Some(exp) = obj.get("experimental").and_then(|v| v.as_object()) {
-        if exp.is_empty() {
-            println!("{indent}{:<18} {{}}", "experimental");
-        } else {
+        if !exp.is_empty() {
             println!("{indent}experimental:");
             for (k, v) in exp {
                 let rendered = match v {

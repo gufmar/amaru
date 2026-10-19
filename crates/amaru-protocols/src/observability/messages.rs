@@ -33,7 +33,7 @@ pub const OBSERVER_PUBLIC_KEY_LEN: usize = 32;
 pub const PUBLICATION_VERSION: u64 = 1;
 
 /// Maximum encoded `MsgPublications` size (whole response / mux buffer).
-pub const MAX_MESSAGE_BYTES: usize = 16384;
+pub const MAX_MESSAGE_BYTES: usize = crate::protocol::OBSERVABILITY_INGRESS;
 
 /// Maximum encoded `openPayload` map size per open publication.
 pub const MAX_OPEN_PAYLOAD_BYTES: usize = 8192;

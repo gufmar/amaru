@@ -28,8 +28,8 @@ mod want_next;
 
 pub use check::ProtoSpec;
 pub use limits::{
-    BLOCK_FETCH_INGRESS, CHAIN_SYNC_INGRESS, HANDSHAKE_INGRESS, KEEP_ALIVE_INGRESS, PEER_SHARING_INGRESS,
-    TX_SUBMISSION_INGRESS, ingress_limit,
+    BLOCK_FETCH_INGRESS, CHAIN_SYNC_INGRESS, HANDSHAKE_INGRESS, KEEP_ALIVE_INGRESS, OBSERVABILITY_INGRESS,
+    PEER_SHARING_INGRESS, TX_SUBMISSION_INGRESS, ingress_limit,
 };
 pub use miniprotocol::{
     Inputs, Internal, Miniprotocol, Outcome, ProtocolState, Pull, StageState, Timeout, from_wire, miniprotocol, outcome,
@@ -196,6 +196,7 @@ pub enum KnownProtocol {
     TxSubmission,
     KeepAlive,
     PeerShare,
+    Observability,
 }
 
 impl KnownProtocol {
@@ -207,6 +208,7 @@ impl KnownProtocol {
             KnownProtocol::TxSubmission => PROTO_N2N_TX_SUB.for_role_t(),
             KnownProtocol::KeepAlive => PROTO_N2N_KEEP_ALIVE.for_role_t(),
             KnownProtocol::PeerShare => PROTO_N2N_PEER_SHARE.for_role_t(),
+            KnownProtocol::Observability => PROTO_N2N_OBSERVABILITY.for_role_t(),
         }
     }
 }
@@ -222,6 +224,7 @@ impl<R: RoleT> TryFrom<ProtocolId<R>> for KnownProtocol {
             PROTO_N2N_TX_SUB => Ok(KnownProtocol::TxSubmission),
             PROTO_N2N_KEEP_ALIVE => Ok(KnownProtocol::KeepAlive),
             PROTO_N2N_PEER_SHARE => Ok(KnownProtocol::PeerShare),
+            PROTO_N2N_OBSERVABILITY => Ok(KnownProtocol::Observability),
             _ => Err(protocol_id),
         }
     }

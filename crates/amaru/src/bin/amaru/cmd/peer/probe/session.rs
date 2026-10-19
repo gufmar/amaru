@@ -33,7 +33,10 @@ use amaru_protocols::{
     },
     peer_sharing::{ShareResult, register_peer_sharing_initiator_oneshot},
     peer_tracking::InMemoryPeerTracking,
-    protocol::{Inputs, PROTO_HANDSHAKE, Role, ingress_limit},
+    protocol::{
+        Inputs, PROTO_HANDSHAKE, PROTO_N2N_CHAIN_SYNC, PROTO_N2N_KEEP_ALIVE, PROTO_N2N_OBSERVABILITY,
+        PROTO_N2N_PEER_SHARE, Role, ingress_limit,
+    },
     protocol_messages::{version_data::PeerSharing, version_number::VersionNumber, version_table::VersionTable},
     store_effects::ResourceHeaderStore,
 };
@@ -683,16 +686,18 @@ async fn driver_stage(mut state: Driver, msg: DriverMsg, eff: Effects<DriverMsg>
             mark(&mut state, "handshake_start");
             let muxer = eff.stage("mux", mux::stage).await;
             let muxer = eff.supervise(muxer, DriverMsg::MuxDied);
+            // Hold inbound SDUs for every mini-protocol this probe may register later.
+            // Without this, a fast peer reply (especially observability mux 11) can arrive
+            // before `MuxMessage::Register` is processed and kill the mux as "unknown protocol".
+            let early = [
+                (PROTO_HANDSHAKE.erase(), ingress_limit(PROTO_HANDSHAKE)),
+                (PROTO_N2N_CHAIN_SYNC.erase(), ingress_limit(PROTO_N2N_CHAIN_SYNC)),
+                (PROTO_N2N_KEEP_ALIVE.erase(), ingress_limit(PROTO_N2N_KEEP_ALIVE)),
+                (PROTO_N2N_PEER_SHARE.erase(), ingress_limit(PROTO_N2N_PEER_SHARE)),
+                (PROTO_N2N_OBSERVABILITY.erase(), ingress_limit(PROTO_N2N_OBSERVABILITY)),
+            ];
             let muxer = eff
-                .wire_up(
-                    muxer,
-                    mux::State::new(
-                        state.conn_id,
-                        &[(PROTO_HANDSHAKE.erase(), ingress_limit(PROTO_HANDSHAKE))],
-                        Role::Initiator,
-                        state.peer,
-                    ),
-                )
+                .wire_up(muxer, mux::State::new(state.conn_id, &early, Role::Initiator, state.peer))
                 .await;
 
             let versions = match state.handshake_mode {

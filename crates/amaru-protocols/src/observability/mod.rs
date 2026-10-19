@@ -85,7 +85,7 @@ pub async fn register_observability_initiator<M: amaru_pure_stage::SendData>(
             protocol: PROTO_N2N_OBSERVABILITY.erase(),
             frame: Frame::OneCborItem,
             handler: obs.contramap(Inputs::<InitiatorMessage>::Network),
-            max_buffer: MAX_MESSAGE_BYTES,
+            max_buffer: crate::protocol::ingress_limit(PROTO_N2N_OBSERVABILITY),
         },
     )
     .await;

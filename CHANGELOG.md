@@ -69,6 +69,8 @@ Other guiding principles:
 
 ### Fixed
 
+- **amaru**: with `--observability` enabled, inbound peers that send `GetPublications` before mux 11 is registered no longer lose the connection. Those bytes are held in the early mux buffer; the observability responder still registers last so it does not delay keepalive, chainsync, or peer-share.
+- **amaru**: `amaru peer probe` no longer fails the whole probe when a separate handshake-query connection drops, if a normal Accept session still succeeds.
 - **amaru**: a fork switch logs each block it adopts. Those blocks, other than the new tip, are recorded as validated headers, so a later chain prune does not report them as pruned.
 - **amaru**: startup no longer logs `db_chain.initialize` when the chain store does not contain the ledger tip. The process still exits with the mismatch error.
 - **amaru**: the trace catalog describes an unknown pool retirement, an unknown reward reset, a DRep registration without a deposit, an unknown DRep removal, and an unknown DRep expiry refresh as those skips.

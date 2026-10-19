@@ -56,6 +56,9 @@ pub const KEEP_ALIVE_INGRESS: usize = safety(1280);
 /// Peer-sharing: one TCP initial window, enough for 255 addresses plus CBOR overhead.
 pub const PEER_SHARING_INGRESS: usize = 4 * 1440;
 
+/// Experimental observability (mux 11): whole `MsgPublications` / mux buffer (16 KiB).
+pub const OBSERVABILITY_INGRESS: usize = 16_384;
+
 const _: () = {
     assert!(HANDSHAKE_INGRESS == 5_760);
     assert!(CHAIN_SYNC_INGRESS == 462_000);
@@ -63,6 +66,7 @@ const _: () = {
     assert!(TX_SUBMISSION_INGRESS == 721_424);
     assert!(KEEP_ALIVE_INGRESS == 1_408);
     assert!(PEER_SHARING_INGRESS == 5_760);
+    assert!(OBSERVABILITY_INGRESS == 16_384);
 };
 
 /// Ingress buffer for `protocol`, ignoring the responder bit.
@@ -81,5 +85,6 @@ pub fn ingress_limit<R: RoleT>(protocol: ProtocolId<R>) -> usize {
         TxSubmission => TX_SUBMISSION_INGRESS,
         KeepAlive => KEEP_ALIVE_INGRESS,
         PeerShare => PEER_SHARING_INGRESS,
+        Observability => OBSERVABILITY_INGRESS,
     }
 }

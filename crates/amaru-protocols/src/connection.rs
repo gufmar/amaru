@@ -34,7 +34,7 @@ use crate::{
     peer_tracking_effects::PeerTrack,
     protocol::{
         Erased, Inputs, PROTO_HANDSHAKE, PROTO_N2N_BLOCK_FETCH, PROTO_N2N_CHAIN_SYNC, PROTO_N2N_KEEP_ALIVE,
-        PROTO_N2N_PEER_SHARE, PROTO_N2N_TX_SUB, ProtocolId, Role, ingress_limit,
+        PROTO_N2N_OBSERVABILITY, PROTO_N2N_PEER_SHARE, PROTO_N2N_TX_SUB, ProtocolId, Role, ingress_limit,
     },
     protocol_messages::{
         handshake::HandshakeResult, version_data::VersionData, version_number::VersionNumber,
@@ -334,13 +334,19 @@ async fn notify_chainsync_terminated(params: &Params, eff: &Effects<ConnectionMe
 ///
 /// A responder always serves. An initiator serves when it advertises full duplex, which is
 /// the case for every connection this node opens. Peer sharing is included when this side
-/// advertises it. Each direction asks [`ingress_limit`] for its own protocol id (the responder
-/// bit included). Any protocol id absent from this list still fails the connection.
-fn early_mini_protocol_buffers(advertisable: bool) -> Vec<(ProtocolId<Erased>, usize)> {
+/// advertises it. Observability (mux 11) is included when enabled so a peer that sends
+/// `GetPublications` before that responder is registered (last) does not kill the
+/// connection; bytes sit in the buffer until Register.
+/// Each direction asks [`ingress_limit`] for its own protocol id (the responder bit included).
+/// Any protocol id absent from this list still fails the connection.
+fn early_mini_protocol_buffers(advertisable: bool, observability: bool) -> Vec<(ProtocolId<Erased>, usize)> {
     let mut both =
         vec![PROTO_HANDSHAKE, PROTO_N2N_CHAIN_SYNC, PROTO_N2N_BLOCK_FETCH, PROTO_N2N_TX_SUB, PROTO_N2N_KEEP_ALIVE];
     if advertisable {
         both.push(PROTO_N2N_PEER_SHARE);
+    }
+    if observability {
+        both.push(PROTO_N2N_OBSERVABILITY);
     }
     let mut buffers = Vec::with_capacity(both.len() * 2);
     for id in both {
@@ -361,7 +367,7 @@ async fn do_initialize(
     let advertisable = true;
     let muxer = eff.stage_with_mailbox_size("mux", mux::stage, mux::MUX_MAILBOX_SIZE).await;
     let muxer = eff.supervise(muxer, ConnectionMessage::ChildDied(ChildId::Mux));
-    let early = early_mini_protocol_buffers(advertisable);
+    let early = early_mini_protocol_buffers(advertisable, config.observability_enabled);
     let muxer = eff.wire_up(muxer, mux::State::new(*conn_id, &early, *role, peer)).await;
 
     let handshake_result = eff.me_ref().contramap(ConnectionMessage::Handshake);
@@ -541,6 +547,8 @@ async fn register_responders(mut s: Established, params: &Params, eff: &Effects<
             .await,
         );
     }
+    // Last on purpose: consensus / keepalive / peer-share must not wait on observability.
+    // Early mux buffering holds GetPublications until this Register installs the handler.
     if config.observability_enabled && s.version_number >= VersionNumber::V16 {
         register_observability_responder(
             &s.muxer,
@@ -816,7 +824,7 @@ mod tests {
     /// is constructed with — not a second copy of that table.
     #[test]
     fn ingress_limit_for_each_protocol_and_role() {
-        let buffers = early_mini_protocol_buffers(true);
+        let buffers = early_mini_protocol_buffers(true, true);
         let installed = |id: ProtocolId<Erased>| -> usize {
             buffers.iter().find(|(proto, _)| *proto == id).map(|(_, n)| *n).expect("protocol is buffered")
         };
@@ -827,12 +835,19 @@ mod tests {
             (PROTO_N2N_TX_SUB, 721_424),
             (PROTO_N2N_KEEP_ALIVE, 1_408),
             (PROTO_N2N_PEER_SHARE, 5_760),
+            (PROTO_N2N_OBSERVABILITY, 16_384),
         ] {
             assert_eq!(ingress_limit(id), expected, "initiator {id}");
             assert_eq!(ingress_limit(id.responder()), expected, "responder {}", id.responder());
             assert_eq!(installed(id.erase()), ingress_limit(id), "early initiator {id}");
             assert_eq!(installed(id.responder().erase()), ingress_limit(id.responder()), "early responder {id}");
         }
+        let without_obs = early_mini_protocol_buffers(true, false);
+        assert!(
+            without_obs.iter().all(|(id, _)| *id != PROTO_N2N_OBSERVABILITY.erase()
+                && *id != PROTO_N2N_OBSERVABILITY.responder().erase()),
+            "observability early buffers only when enabled"
+        );
     }
 
     #[test]
