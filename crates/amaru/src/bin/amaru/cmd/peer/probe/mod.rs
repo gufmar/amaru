@@ -393,6 +393,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let protocol_timeout = args.protocol_timeout;
     let max_n2n_version = resolve_requested_version(args.requested_version)?;
     let color = color_enabled();
+    let out = HumanOut::new(color);
     // Stream long-running human steps as they complete; JSON stays one final document.
     let stream = !args.json;
 
@@ -444,7 +445,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     }
 
     if stream {
-        print_probe_header(&report, color);
+        out.probe_header(&report);
     }
 
     // --handshake: dedicated query connection listing every remote-offered N2N version.
@@ -476,10 +477,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 // Soft when a session Accept will follow: the query connection is separate and
                 // flaky under load; negotiated version still comes from the Accept handshake.
                 if actions.needs_session() {
-                    let (_, _, err_c, _, _, reset) = color_palette(color);
                     if stream {
-                        println!("  {err_c}warn{reset}    handshake query: {err:#}");
-                        flush_stdout();
+                        out.warn_line(format!("handshake query: {err:#}"));
                     }
                 } else {
                     report.errors.push(format!("handshake query: {err:#}"));
@@ -488,9 +487,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
         }
         if stream && !actions.needs_session() {
             if let Some(hs) = &report.handshake {
-                print_handshake_section(hs, color);
+                out.handshake(hs);
             }
-            print_errors(&report.errors, color);
+            out.errors(&report.errors);
         }
     }
 
@@ -549,19 +548,19 @@ async fn run(args: Args) -> anyhow::Result<()> {
         }
         if stream {
             if let Some(hs) = &report.handshake {
-                print_handshake_section(hs, color);
+                out.handshake(hs);
             }
             if !report.ping_rtts_ms.is_empty() {
-                print_ping_section_buffered(&report, color);
+                out.ping(&report);
             }
-            print_session_sections(&report, color, /*include_pscheck*/ false, /*skip_handshake*/ true);
+            out.session_sections(&report, /*include_pscheck*/ false, /*skip_handshake*/ true);
         }
     } else if stream && actions.handshake {
         // handshake-only already streamed above
     }
 
     if stream && args.time_track && !report.timetrack.is_empty() {
-        print_timetrack_section(&report.timetrack, color);
+        out.timetrack(&report.timetrack);
     }
 
     if let Some(ps_spec) = actions.ps_check {
@@ -583,12 +582,10 @@ async fn run(args: Args) -> anyhow::Result<()> {
             };
             if stream {
                 if pscheck_header {
-                    let (ok, _, _, _, _, reset) = color_palette(color);
-                    println!("  {ok}pscheck{reset}");
-                    flush_stdout();
+                    out.pscheck_header();
                     pscheck_header = false;
                 }
-                print_pscheck_progress(&check, color);
+                out.pscheck_nested(&check);
             }
             report.peer_checks.push(check);
         }
@@ -654,114 +651,332 @@ fn emit(report: &session::ProbeReport, json: bool, color: bool) -> anyhow::Resul
     if json {
         println!("{}", serde_json::to_string_pretty(report)?);
     } else {
-        print_probe_header(report, color);
+        let out = HumanOut::new(color);
+        out.probe_header(report);
         if let Some(hs) = &report.handshake {
-            print_handshake_section(hs, color);
+            out.handshake(hs);
         }
         if !report.ping_rtts_ms.is_empty() {
-            print_ping_section_buffered(report, color);
+            out.ping(report);
         }
-        print_session_sections(report, color, /*include_pscheck*/ true, /*skip_handshake*/ true);
+        out.session_sections(report, /*include_pscheck*/ true, /*skip_handshake*/ true);
         if !report.timetrack.is_empty() {
-            print_timetrack_section(&report.timetrack, color);
+            out.timetrack(&report.timetrack);
         }
     }
     Ok(())
 }
 
-type Palette = (&'static str, &'static str, &'static str, &'static str, &'static str, &'static str);
-
-fn color_palette(color: bool) -> Palette {
-    if color {
-        ("\x1b[32m", "\x1b[33m", "\x1b[31m", "\x1b[36m", "\x1b[1m", "\x1b[0m")
-    } else {
-        ("", "", "", "", "", "")
-    }
+/// ANSI (or empty) color codes for human probe output.
+struct Palette {
+    ok: &'static str,
+    warn: &'static str,
+    err: &'static str,
+    cyan: &'static str,
+    bold: &'static str,
+    reset: &'static str,
 }
 
-fn flush_stdout() {
-    let _ = io::Write::flush(&mut io::stdout());
-}
-
-fn print_probe_header(report: &session::ProbeReport, color: bool) {
-    let (_, _, _, cyan, bold, reset) = color_palette(color);
-    println!("{bold}probe{reset} {cyan}{}{reset} ({})", report.address, report.network);
-    flush_stdout();
-}
-
-fn print_handshake_section(hs: &session::HandshakeInfo, color: bool) {
-    let (ok, _, _, _, _, reset) = color_palette(color);
-    println!("  {ok}handshake{reset}");
-    if !hs.offered_versions.is_empty() {
-        let list = hs.offered_versions.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
-        println!("    offered_versions: [{list}]");
-    }
-    if let Some(v) = hs.version {
-        println!("    version:          {v}");
-    }
-    if let Some(m) = hs.network_magic {
-        println!("    network_magic:    {m}");
-    }
-    if let Some(ps) = hs.peer_sharing {
-        println!("    peer_sharing:     {ps}");
-    }
-    if let Some(io) = hs.initiator_only {
-        println!("    initiator_only:   {io}");
-    }
-    if let Some(q) = hs.query {
-        println!("    query:            {q}");
-    }
-    if let Some(p) = hs.peras_support {
-        println!("    peras_support:    {p}");
-    }
-    flush_stdout();
-}
-
-/// Tip / peershare / observe (and optionally already-collected pscheck rows).
-fn print_session_sections(report: &session::ProbeReport, color: bool, include_pscheck: bool, skip_handshake: bool) {
-    let (ok, warn, _err, _, _, reset) = color_palette(color);
-
-    if !skip_handshake && let Some(hs) = &report.handshake {
-        print_handshake_section(hs, color);
-    }
-    if let Some(tip) = &report.tip {
-        println!("  {ok}tip{reset}");
-        println!("    slot:             {}", tip.slot);
-        println!("    block_height:     {}", tip.block_height);
-        println!("    hash:             {}", tip.hash);
-    }
-    if let Some(peers) = &report.peers {
-        if peers.is_empty() {
-            println!("  {warn}peershare{reset}  skipped (not negotiated)");
+impl Palette {
+    fn new(color: bool) -> Self {
+        if color {
+            Self {
+                ok: "\x1b[32m",
+                warn: "\x1b[33m",
+                err: "\x1b[31m",
+                cyan: "\x1b[36m",
+                bold: "\x1b[1m",
+                reset: "\x1b[0m",
+            }
         } else {
-            println!("  {ok}peershare{reset}  {} peer(s)", peers.len());
-            for p in peers {
-                if include_pscheck && let Some(check) = report.peer_checks.iter().find(|c| c.address == *p) {
-                    print_peershare_check_line(p, check, ok, warn, reset);
+            Self { ok: "", warn: "", err: "", cyan: "", bold: "", reset: "" }
+        }
+    }
+
+    fn status(&self, ok: bool) -> &'static str {
+        if ok { self.ok } else { self.warn }
+    }
+}
+
+/// Shared helpers for human-readable probe sections (streaming and buffered).
+struct HumanOut {
+    p: Palette,
+}
+
+impl HumanOut {
+    fn new(color: bool) -> Self {
+        Self { p: Palette::new(color) }
+    }
+
+    fn flush(&self) {
+        let _ = io::Write::flush(&mut io::stdout());
+    }
+
+    /// Aligned `key: value` line under a section.
+    fn field(&self, indent: &str, key: &str, value: impl std::fmt::Display) {
+        let label = format!("{key}:");
+        println!("{indent}{label:<18} {value}");
+    }
+
+    fn section_ok(&self, name: &str) {
+        println!("  {}{name}{}", self.p.ok, self.p.reset);
+    }
+
+    fn section_ok_suffix(&self, name: &str, suffix: impl std::fmt::Display) {
+        println!("  {}{name}{}  {suffix}", self.p.ok, self.p.reset);
+    }
+
+    fn section_warn_suffix(&self, name: &str, suffix: impl std::fmt::Display) {
+        println!("  {}{name}{}  {suffix}", self.p.warn, self.p.reset);
+    }
+
+    fn probe_header(&self, report: &session::ProbeReport) {
+        println!(
+            "{}probe{} {}{}{} ({})",
+            self.p.bold, self.p.reset, self.p.cyan, report.address, self.p.reset, report.network
+        );
+        self.flush();
+    }
+
+    fn handshake(&self, hs: &session::HandshakeInfo) {
+        self.section_ok("handshake");
+        if !hs.offered_versions.is_empty() {
+            let list = hs.offered_versions.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
+            self.field("    ", "offered_versions", format!("[{list}]"));
+        }
+        if let Some(v) = hs.version {
+            self.field("    ", "version", v);
+        }
+        if let Some(m) = hs.network_magic {
+            self.field("    ", "network_magic", m);
+        }
+        if let Some(ps) = hs.peer_sharing {
+            self.field("    ", "peer_sharing", ps);
+        }
+        if let Some(io) = hs.initiator_only {
+            self.field("    ", "initiator_only", io);
+        }
+        if let Some(q) = hs.query {
+            self.field("    ", "query", q);
+        }
+        if let Some(p) = hs.peras_support {
+            self.field("    ", "peras_support", p);
+        }
+        self.flush();
+    }
+
+    /// Tip / peershare / observe (and optionally already-collected pscheck rows).
+    fn session_sections(&self, report: &session::ProbeReport, include_pscheck: bool, skip_handshake: bool) {
+        if !skip_handshake && let Some(hs) = &report.handshake {
+            self.handshake(hs);
+        }
+        if let Some(tip) = &report.tip {
+            self.section_ok("tip");
+            self.field("    ", "slot", tip.slot);
+            self.field("    ", "block_height", tip.block_height);
+            self.field("    ", "hash", &tip.hash);
+        }
+        if let Some(peers) = &report.peers {
+            if peers.is_empty() {
+                self.section_warn_suffix("peershare", "skipped (not negotiated)");
+            } else {
+                self.section_ok_suffix("peershare", format!("{} peer(s)", peers.len()));
+                for p in peers {
+                    if include_pscheck && let Some(check) = report.peer_checks.iter().find(|c| c.address == *p) {
+                        self.pscheck_nested(check);
+                        continue;
+                    }
+                    println!("    {p}");
+                }
+            }
+        }
+        if let Some(pubs) = &report.publications {
+            self.section_ok("observe");
+            self.publications(pubs, "    ");
+        }
+        if include_pscheck {
+            for check in &report.peer_checks {
+                if report.peers.as_ref().is_some_and(|ps| ps.iter().any(|p| p == &check.address)) {
+                    if let Some(pubs) = &check.publications {
+                        println!("      observe {}", check.address);
+                        self.publications(pubs, "        ");
+                    }
                     continue;
                 }
-                println!("    {p}");
+                self.pscheck_orphan(check);
+            }
+        }
+        self.errors(&report.errors);
+        self.flush();
+    }
+
+    fn ping(&self, report: &session::ProbeReport) {
+        let samples = &report.ping_rtts_ms;
+        self.section_ok("ping");
+        if samples.len() == 1 {
+            self.field("    ", "rtt", format!("{} ms", format_rtt_ms(samples[0])));
+            return;
+        }
+        let min = samples.iter().copied().fold(f64::INFINITY, f64::min);
+        let max = samples.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let avg = samples.iter().sum::<f64>() / samples.len() as f64;
+        self.field("    ", "count", samples.len());
+        if let Some(interval) = report.ping_interval_ms {
+            self.field("    ", "interval", format!("{interval} ms"));
+        }
+        for (i, ms) in samples.iter().enumerate() {
+            self.field("    ", &(i + 1).to_string(), format!("{} ms", format_rtt_ms(*ms)));
+        }
+        self.field("    ", "min", format!("{} ms", format_rtt_ms(min)));
+        self.field("    ", "avg", format!("{} ms", format_rtt_ms(avg)));
+        self.field("    ", "max", format!("{} ms", format_rtt_ms(max)));
+    }
+
+    fn timetrack(&self, steps: &[session::TimeTrackStep]) {
+        self.section_ok("timetrack");
+        println!("    {:<22} {:>10} {:>10} {:>10} {:>10}  {}", "step", "delta_ms", "elapsed_ms", "sent", "recv", "at");
+        for s in steps {
+            println!(
+                "    {:<22} {:>10} {:>10} {:>10} {:>10}  {}",
+                s.step, s.delta_ms, s.elapsed_ms, s.bytes_sent, s.bytes_recv, s.at
+            );
+        }
+        if let Some(last) = steps.last() {
+            println!(
+                "    total_elapsed_ms:  {}  bytes_sent: {}  bytes_recv: {}",
+                last.elapsed_ms, last.bytes_sent, last.bytes_recv
+            );
+        }
+        self.flush();
+    }
+
+    fn errors(&self, errors: &[String]) {
+        if errors.is_empty() {
+            return;
+        }
+        for e in errors {
+            println!("  {}error{}   {e}", self.p.err, self.p.reset);
+        }
+        self.flush();
+    }
+
+    fn warn_line(&self, message: impl std::fmt::Display) {
+        println!("  {}warn{}    {message}", self.p.err, self.p.reset);
+        self.flush();
+    }
+
+    fn pscheck_header(&self) {
+        self.section_ok("pscheck");
+        self.flush();
+    }
+
+    /// Nested under a peershare address, or a live streaming progress line.
+    fn pscheck_nested(&self, check: &session::PeerCheck) {
+        let tag = self.p.status(check.ok);
+        println!("    {}  {tag}{}{}", check.address, format_pscheck_summary(check), self.p.reset);
+        self.pscheck_details(check, "      ");
+        self.flush();
+    }
+
+    fn pscheck_orphan(&self, check: &session::PeerCheck) {
+        let tag = self.p.status(check.ok);
+        println!("  {tag}pscheck{}  {}  {}", self.p.reset, check.address, format_pscheck_summary(check));
+        self.pscheck_details(check, "           ");
+    }
+
+    fn pscheck_details(&self, check: &session::PeerCheck, indent: &str) {
+        if !check.ping_rtts_ms.is_empty() {
+            let samples =
+                check.ping_rtts_ms.iter().map(|ms| format!("{} ms", format_rtt_ms(*ms))).collect::<Vec<_>>().join(", ");
+            self.field(indent, "ping", samples);
+        }
+        if let Some(tip) = &check.tip {
+            self.field(indent, "tip slot", tip.slot);
+            self.field(indent, "tip height", tip.block_height);
+            self.field(indent, "tip hash", &tip.hash);
+        }
+        if let Some(peers) = &check.peers {
+            self.field(indent, "peershare", format!("{} peer(s) (not recursively checked)", peers.len()));
+            for p in peers {
+                println!("{indent}  {p}");
+            }
+        }
+        if let Some(pubs) = &check.publications {
+            println!("{indent}observe:");
+            self.publications(pubs, &format!("{indent}  "));
+        }
+        if !check.timetrack.is_empty() {
+            println!("{indent}timetrack:");
+            for s in &check.timetrack {
+                println!("{indent}  {:<22} {:>10} {:>10}", s.step, s.delta_ms, s.elapsed_ms);
             }
         }
     }
-    if let Some(pubs) = &report.publications {
-        println!("  {ok}observe{reset}");
-        print_publications_human(pubs, "    ");
-    }
-    if include_pscheck {
-        for check in &report.peer_checks {
-            if report.peers.as_ref().is_some_and(|ps| ps.iter().any(|p| p == &check.address)) {
-                if let Some(pubs) = &check.publications {
-                    println!("      observe {}", check.address);
-                    print_publications_human(pubs, "        ");
+
+    fn publications(&self, value: &serde_json::Value, indent: &str) {
+        match value {
+            serde_json::Value::Object(map) => {
+                let ty = map.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
+                self.field(indent, "type", ty);
+                if let Some(items) = map.get("items").and_then(|v| v.as_array()) {
+                    self.field(indent, "publications", items.len());
+                    for (i, item) in items.iter().enumerate() {
+                        println!("{indent}[{i}]");
+                        self.publication_item(item, &format!("{indent}  "));
+                    }
                 }
-                continue;
             }
-            print_orphan_pscheck(check, ok, warn, reset);
+            other => {
+                for line in serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()).lines() {
+                    println!("{indent}{line}");
+                }
+            }
         }
     }
-    print_errors(&report.errors, color);
-    flush_stdout();
+
+    fn publication_item(&self, item: &serde_json::Value, indent: &str) {
+        let Some(obj) = item.as_object() else {
+            println!("{indent}{item}");
+            return;
+        };
+        const KEYS: &[&str] = &[
+            "kind",
+            "version",
+            "snapshot_slot",
+            "node_name",
+            "node_version_major",
+            "node_version_minor",
+            "node_version_patch",
+            "node_type",
+            "git_revision",
+            "observer_public_key",
+            "ciphertext_len",
+        ];
+        for key in KEYS {
+            if let Some(v) = obj.get(*key) {
+                if v.is_null() {
+                    continue;
+                }
+                let rendered = match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                self.field(indent, key, rendered);
+            }
+        }
+        if let Some(exp) = obj.get("experimental").and_then(|v| v.as_object())
+            && !exp.is_empty()
+        {
+            println!("{indent}experimental:");
+            for (k, v) in exp {
+                let rendered = match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                println!("{indent}  {k}: {rendered}");
+            }
+        }
+    }
 }
 
 fn format_pscheck_summary(check: &session::PeerCheck) -> String {
@@ -774,86 +989,6 @@ fn format_pscheck_summary(check: &session::PeerCheck) -> String {
     }
 }
 
-fn print_pscheck_details(check: &session::PeerCheck, indent: &str) {
-    if !check.ping_rtts_ms.is_empty() {
-        let samples =
-            check.ping_rtts_ms.iter().map(|ms| format!("{} ms", format_rtt_ms(*ms))).collect::<Vec<_>>().join(", ");
-        println!("{indent}ping:             {samples}");
-    }
-    if let Some(tip) = &check.tip {
-        println!("{indent}tip slot:         {}", tip.slot);
-        println!("{indent}tip height:       {}", tip.block_height);
-        println!("{indent}tip hash:         {}", tip.hash);
-    }
-    if let Some(peers) = &check.peers {
-        println!("{indent}peershare:        {} peer(s) (not recursively checked)", peers.len());
-        for p in peers {
-            println!("{indent}  {p}");
-        }
-    }
-    if let Some(pubs) = &check.publications {
-        println!("{indent}observe:");
-        print_publications_human(pubs, &format!("{indent}  "));
-    }
-    if !check.timetrack.is_empty() {
-        println!("{indent}timetrack:");
-        for s in &check.timetrack {
-            println!("{indent}  {:<22} {:>10} {:>10}", s.step, s.delta_ms, s.elapsed_ms);
-        }
-    }
-}
-
-fn print_peershare_check_line(addr: &str, check: &session::PeerCheck, ok: &str, warn: &str, reset: &str) {
-    let tag = if check.ok { ok } else { warn };
-    println!("    {addr}  {tag}{}{reset}", format_pscheck_summary(check));
-    print_pscheck_details(check, "      ");
-}
-
-fn print_orphan_pscheck(check: &session::PeerCheck, ok: &str, warn: &str, reset: &str) {
-    let tag = if check.ok { ok } else { warn };
-    println!("  {tag}pscheck{reset}  {}  {}", check.address, format_pscheck_summary(check));
-    print_pscheck_details(check, "           ");
-}
-
-/// Live line for one finished pscheck (human streaming mode).
-fn print_pscheck_progress(check: &session::PeerCheck, color: bool) {
-    let (ok, warn, _, _, _, reset) = color_palette(color);
-    let tag = if check.ok { ok } else { warn };
-    println!("    {}  {tag}{}{reset}", check.address, format_pscheck_summary(check));
-    print_pscheck_details(check, "      ");
-    flush_stdout();
-}
-
-fn print_errors(errors: &[String], color: bool) {
-    if errors.is_empty() {
-        return;
-    }
-    let (_, _, err, _, _, reset) = color_palette(color);
-    for e in errors {
-        println!("  {err}error{reset}   {e}");
-    }
-    flush_stdout();
-}
-
-fn print_timetrack_section(steps: &[session::TimeTrackStep], color: bool) {
-    let (ok, _, _, _, _, reset) = color_palette(color);
-    println!("  {ok}timetrack{reset}");
-    println!("    {:<22} {:>10} {:>10} {:>10} {:>10}  {}", "step", "delta_ms", "elapsed_ms", "sent", "recv", "at");
-    for s in steps {
-        println!(
-            "    {:<22} {:>10} {:>10} {:>10} {:>10}  {}",
-            s.step, s.delta_ms, s.elapsed_ms, s.bytes_sent, s.bytes_recv, s.at
-        );
-    }
-    if let Some(last) = steps.last() {
-        println!(
-            "    total_elapsed_ms:  {}  bytes_sent: {}  bytes_recv: {}",
-            last.elapsed_ms, last.bytes_sent, last.bytes_recv
-        );
-    }
-    flush_stdout();
-}
-
 fn format_rtt_ms(ms: f64) -> String {
     if ms >= 10.0 {
         format!("{ms:.1}")
@@ -861,94 +996,6 @@ fn format_rtt_ms(ms: f64) -> String {
         format!("{ms:.2}")
     } else {
         format!("{ms:.3}")
-    }
-}
-
-fn print_ping_section_buffered(report: &session::ProbeReport, color: bool) {
-    let (ok, _, _, _, _, reset) = color_palette(color);
-    let samples = &report.ping_rtts_ms;
-    println!("  {ok}ping{reset}");
-    if samples.len() == 1 {
-        println!("    rtt:              {} ms", format_rtt_ms(samples[0]));
-        return;
-    }
-    let min = samples.iter().copied().fold(f64::INFINITY, f64::min);
-    let max = samples.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let avg = samples.iter().sum::<f64>() / samples.len() as f64;
-    println!("    count:            {}", samples.len());
-    if let Some(interval) = report.ping_interval_ms {
-        println!("    interval:         {interval} ms");
-    }
-    for (i, ms) in samples.iter().enumerate() {
-        println!("    {:<18} {} ms", format!("{}:", i + 1), format_rtt_ms(*ms));
-    }
-    println!("    min:              {} ms", format_rtt_ms(min));
-    println!("    avg:              {} ms", format_rtt_ms(avg));
-    println!("    max:              {} ms", format_rtt_ms(max));
-}
-
-fn print_publications_human(value: &serde_json::Value, indent: &str) {
-    match value {
-        serde_json::Value::Object(map) => {
-            let ty = map.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
-            println!("{indent}type:             {ty}");
-            if let Some(items) = map.get("items").and_then(|v| v.as_array()) {
-                println!("{indent}publications:     {}", items.len());
-                for (i, item) in items.iter().enumerate() {
-                    println!("{indent}[{i}]");
-                    print_publication_item(item, &format!("{indent}  "));
-                }
-            }
-        }
-        other => {
-            for line in serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()).lines() {
-                println!("{indent}{line}");
-            }
-        }
-    }
-}
-
-fn print_publication_item(item: &serde_json::Value, indent: &str) {
-    let Some(obj) = item.as_object() else {
-        println!("{indent}{item}");
-        return;
-    };
-    let keys = [
-        "kind",
-        "version",
-        "snapshot_slot",
-        "node_name",
-        "node_version_major",
-        "node_version_minor",
-        "node_version_patch",
-        "node_type",
-        "git_revision",
-        "observer_public_key",
-        "ciphertext_len",
-    ];
-    for key in keys {
-        if let Some(v) = obj.get(key) {
-            if v.is_null() {
-                continue;
-            }
-            let rendered = match v {
-                serde_json::Value::String(s) => s.clone(),
-                other => other.to_string(),
-            };
-            println!("{indent}{key:<18} {rendered}");
-        }
-    }
-    if let Some(exp) = obj.get("experimental").and_then(|v| v.as_object()) {
-        if !exp.is_empty() {
-            println!("{indent}experimental:");
-            for (k, v) in exp {
-                let rendered = match v {
-                    serde_json::Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                };
-                println!("{indent}  {k}: {rendered}");
-            }
-        }
     }
 }
 

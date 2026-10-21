@@ -80,58 +80,67 @@ pub enum FieldId {
     CpuCores,
     /// Experimental `amaru.process_rss_bytes`.
     ProcessRssBytes,
-    /// Experimental `amaru.peers_inbound` — accepted inbound connections.
+    /// Experimental `amaru.peers_inbound` (accepted inbound connections).
     PeersInbound,
-    /// Experimental `amaru.peers_outbound` — established outbound connections.
+    /// Experimental `amaru.peers_outbound` (established outbound connections).
     PeersOutbound,
-    /// Experimental `amaru.peers_outbound_connecting` — outbound dials in flight.
+    /// Experimental `amaru.peers_outbound_connecting` (outbound dials in flight).
     PeersOutboundConnecting,
-    /// Experimental `amaru.peers_using` — connections in Diffusion local use.
+    /// Experimental `amaru.peers_using` (connections in Diffusion local use).
     PeersUsing,
-    /// Experimental `amaru.peers_target_upstream` — configured upstream target.
+    /// Experimental `amaru.peers_target_upstream` (configured upstream target).
     PeersTargetUpstream,
-    /// Experimental `amaru.peers_target_downstream` — configured downstream cap.
+    /// Experimental `amaru.peers_target_downstream` (configured downstream cap).
     PeersTargetDownstream,
 }
 
+/// Single source of truth for catalogue id, CLI aliases, and iteration order.
+struct FieldEntry {
+    id: FieldId,
+    /// Canonical catalogue / wire key (experimental fields use this as the map key).
+    catalogue: &'static str,
+    /// Short CLI aliases (catalogue id is always accepted too).
+    aliases: &'static [&'static str],
+}
+
+const FIELD_CATALOGUE: &[FieldEntry] = &[
+    FieldEntry { id: FieldId::NodeName, catalogue: "node_name", aliases: &["name"] },
+    FieldEntry { id: FieldId::NodeVersionMajor, catalogue: "node_version_major", aliases: &["maj"] },
+    FieldEntry { id: FieldId::NodeVersionMinor, catalogue: "node_version_minor", aliases: &["min"] },
+    FieldEntry { id: FieldId::NodeVersionPatch, catalogue: "node_version_patch", aliases: &["pat"] },
+    FieldEntry { id: FieldId::NodeType, catalogue: "node_type", aliases: &["type"] },
+    FieldEntry { id: FieldId::GitRevision, catalogue: "git_revision", aliases: &["git"] },
+    FieldEntry { id: FieldId::Version, catalogue: "amaru.version", aliases: &["ver"] },
+    FieldEntry { id: FieldId::CpuCores, catalogue: "amaru.cpu_cores", aliases: &["cpu"] },
+    FieldEntry { id: FieldId::ProcessRssBytes, catalogue: "amaru.process_rss_bytes", aliases: &["rss"] },
+    FieldEntry { id: FieldId::PeersInbound, catalogue: "amaru.peers_inbound", aliases: &["pin"] },
+    FieldEntry { id: FieldId::PeersOutbound, catalogue: "amaru.peers_outbound", aliases: &["pout"] },
+    FieldEntry {
+        id: FieldId::PeersOutboundConnecting,
+        catalogue: "amaru.peers_outbound_connecting",
+        aliases: &["pconn"],
+    },
+    FieldEntry { id: FieldId::PeersUsing, catalogue: "amaru.peers_using", aliases: &["puse"] },
+    FieldEntry { id: FieldId::PeersTargetUpstream, catalogue: "amaru.peers_target_upstream", aliases: &["ptup"] },
+    FieldEntry { id: FieldId::PeersTargetDownstream, catalogue: "amaru.peers_target_downstream", aliases: &["ptdown"] },
+];
+
 impl FieldId {
-    const ALL: [FieldId; 15] = [
-        Self::NodeName,
-        Self::NodeVersionMajor,
-        Self::NodeVersionMinor,
-        Self::NodeVersionPatch,
-        Self::NodeType,
-        Self::GitRevision,
-        Self::Version,
-        Self::CpuCores,
-        Self::ProcessRssBytes,
-        Self::PeersInbound,
-        Self::PeersOutbound,
-        Self::PeersOutboundConnecting,
-        Self::PeersUsing,
-        Self::PeersTargetUpstream,
-        Self::PeersTargetDownstream,
-    ];
+    fn all() -> impl Iterator<Item = FieldId> {
+        FIELD_CATALOGUE.iter().map(|e| e.id)
+    }
+
+    fn all_vec() -> Vec<FieldId> {
+        Self::all().collect()
+    }
+
+    fn entry(self) -> &'static FieldEntry {
+        FIELD_CATALOGUE.iter().find(|e| e.id == self).expect("every FieldId is in FIELD_CATALOGUE")
+    }
 
     /// Canonical catalogue string (same as wire key for experimental fields).
     fn as_str(self) -> &'static str {
-        match self {
-            Self::NodeName => "node_name",
-            Self::NodeVersionMajor => "node_version_major",
-            Self::NodeVersionMinor => "node_version_minor",
-            Self::NodeVersionPatch => "node_version_patch",
-            Self::NodeType => "node_type",
-            Self::GitRevision => "git_revision",
-            Self::Version => "amaru.version",
-            Self::CpuCores => "amaru.cpu_cores",
-            Self::ProcessRssBytes => "amaru.process_rss_bytes",
-            Self::PeersInbound => "amaru.peers_inbound",
-            Self::PeersOutbound => "amaru.peers_outbound",
-            Self::PeersOutboundConnecting => "amaru.peers_outbound_connecting",
-            Self::PeersUsing => "amaru.peers_using",
-            Self::PeersTargetUpstream => "amaru.peers_target_upstream",
-            Self::PeersTargetDownstream => "amaru.peers_target_downstream",
-        }
+        self.entry().catalogue
     }
 }
 
@@ -139,26 +148,16 @@ impl FromStr for FieldId {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "name" | "node_name" => Self::NodeName,
-            "maj" | "node_version_major" => Self::NodeVersionMajor,
-            "min" | "node_version_minor" => Self::NodeVersionMinor,
-            "pat" | "node_version_patch" => Self::NodeVersionPatch,
-            "type" | "node_type" => Self::NodeType,
-            "git" | "git_revision" => Self::GitRevision,
-            "ver" | "amaru.version" => Self::Version,
-            "cpu" | "amaru.cpu_cores" => Self::CpuCores,
-            "rss" | "amaru.process_rss_bytes" => Self::ProcessRssBytes,
-            "pin" | "amaru.peers_inbound" => Self::PeersInbound,
-            "pout" | "amaru.peers_outbound" => Self::PeersOutbound,
-            "pconn" | "amaru.peers_outbound_connecting" => Self::PeersOutboundConnecting,
-            "puse" | "amaru.peers_using" => Self::PeersUsing,
-            "ptup" | "amaru.peers_target_upstream" => Self::PeersTargetUpstream,
-            "ptdown" | "amaru.peers_target_downstream" => Self::PeersTargetDownstream,
-            other => bail!(
-                "unknown field '{other}'; known: name,maj,min,pat,type,git,ver,cpu,rss,pin,pout,pconn,puse,ptup,ptdown,all (or full catalogue ids)"
-            ),
-        })
+        for entry in FIELD_CATALOGUE {
+            if entry.catalogue == s || entry.aliases.iter().any(|a| *a == s) {
+                return Ok(entry.id);
+            }
+        }
+        let aliases: Vec<&str> = FIELD_CATALOGUE.iter().flat_map(|e| e.aliases.iter().copied()).collect();
+        bail!(
+            "unknown field '{s}'; known: {},all (or full catalogue ids)",
+            aliases.join(",")
+        )
     }
 }
 
@@ -331,7 +330,7 @@ fn resolve_specs(specs: &[String]) -> ResolvedConfig {
             reason = "no_valid_publications",
             detail = "no usable publication specs; falling back to default all-fields bag".to_string(),
         );
-        publications.push(ResolvedPublication { fields: FieldId::ALL.to_vec() });
+        publications.push(ResolvedPublication { fields: FieldId::all_vec() });
     }
 
     ResolvedConfig { publications }
@@ -376,7 +375,7 @@ fn parse_field_list(raw: &str) -> anyhow::Result<Vec<String>> {
         bail!("field list is empty");
     }
     if raw.eq_ignore_ascii_case("all") {
-        return Ok(FieldId::ALL.iter().map(|f| f.as_str().to_string()).collect());
+        return Ok(FieldId::all().map(|f| f.as_str().to_string()).collect());
     }
     let fields: Vec<String> = raw.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
     if fields.is_empty() {
@@ -491,66 +490,50 @@ impl LiveSamples {
 fn build_payload(fields: &[FieldId], identity: &NodeIdentity, live: &LiveSamples) -> OpenPayload {
     let mut payload = OpenPayload::default();
 
-    for field in fields {
+    for &field in fields {
         match field {
-            FieldId::NodeName => {
-                payload.node_name = Some(NODE_NAME.to_string());
-            }
-            FieldId::NodeVersionMajor => {
-                payload.node_version_major = Some(identity.major);
-            }
-            FieldId::NodeVersionMinor => {
-                payload.node_version_minor = Some(identity.minor);
-            }
-            FieldId::NodeVersionPatch => {
-                payload.node_version_patch = Some(identity.patch);
-            }
-            FieldId::NodeType => {
-                payload.node_type = Some(NODE_TYPE.to_string());
-            }
-            FieldId::GitRevision => {
-                payload.git_revision = Some(identity.git_revision.to_string());
-            }
+            FieldId::NodeName => payload.node_name = Some(NODE_NAME.to_string()),
+            FieldId::NodeVersionMajor => payload.node_version_major = Some(identity.major),
+            FieldId::NodeVersionMinor => payload.node_version_minor = Some(identity.minor),
+            FieldId::NodeVersionPatch => payload.node_version_patch = Some(identity.patch),
+            FieldId::NodeType => payload.node_type = Some(NODE_TYPE.to_string()),
+            FieldId::GitRevision => payload.git_revision = Some(identity.git_revision.to_string()),
             FieldId::Version => {
                 payload
                     .experimental
-                    .insert("amaru.version".into(), ExperimentalValue::Text(identity.version.to_string()));
+                    .insert(field.as_str().into(), ExperimentalValue::Text(identity.version.to_string()));
             }
             FieldId::CpuCores => {
-                payload.experimental.insert("amaru.cpu_cores".into(), ExperimentalValue::Uint(live.cpu_cores));
+                payload.experimental.insert(field.as_str().into(), ExperimentalValue::Uint(live.cpu_cores));
             }
             FieldId::ProcessRssBytes => {
                 if let Some(rss) = live.process_rss_bytes {
-                    payload.experimental.insert("amaru.process_rss_bytes".into(), ExperimentalValue::Uint(rss));
+                    payload.experimental.insert(field.as_str().into(), ExperimentalValue::Uint(rss));
                 }
             }
             FieldId::PeersInbound => {
-                payload.experimental.insert("amaru.peers_inbound".into(), ExperimentalValue::Uint(live.peers.inbound));
+                payload.experimental.insert(field.as_str().into(), ExperimentalValue::Uint(live.peers.inbound));
             }
             FieldId::PeersOutbound => {
-                payload
-                    .experimental
-                    .insert("amaru.peers_outbound".into(), ExperimentalValue::Uint(live.peers.outbound));
+                payload.experimental.insert(field.as_str().into(), ExperimentalValue::Uint(live.peers.outbound));
             }
             FieldId::PeersOutboundConnecting => {
-                payload.experimental.insert(
-                    "amaru.peers_outbound_connecting".into(),
-                    ExperimentalValue::Uint(live.peers.outbound_connecting),
-                );
+                payload
+                    .experimental
+                    .insert(field.as_str().into(), ExperimentalValue::Uint(live.peers.outbound_connecting));
             }
             FieldId::PeersUsing => {
-                payload.experimental.insert("amaru.peers_using".into(), ExperimentalValue::Uint(live.peers.using));
+                payload.experimental.insert(field.as_str().into(), ExperimentalValue::Uint(live.peers.using));
             }
             FieldId::PeersTargetUpstream => {
                 payload
                     .experimental
-                    .insert("amaru.peers_target_upstream".into(), ExperimentalValue::Uint(live.peers.target_upstream));
+                    .insert(field.as_str().into(), ExperimentalValue::Uint(live.peers.target_upstream));
             }
             FieldId::PeersTargetDownstream => {
-                payload.experimental.insert(
-                    "amaru.peers_target_downstream".into(),
-                    ExperimentalValue::Uint(live.peers.target_downstream),
-                );
+                payload
+                    .experimental
+                    .insert(field.as_str().into(), ExperimentalValue::Uint(live.peers.target_downstream));
             }
         }
     }
@@ -628,7 +611,7 @@ mod tests {
     #[test]
     fn bare_open_means_all_fields() {
         let resolved = resolve_specs(&["open".into()]);
-        assert_eq!(resolved.publications[0].fields.len(), FieldId::ALL.len());
+        assert_eq!(resolved.publications[0].fields.len(), FieldId::all_vec().len());
     }
 
     #[test]
@@ -696,13 +679,13 @@ mod tests {
     fn falls_back_to_default_when_all_items_unknown() {
         let resolved = resolve_specs(&["open:not_a_real_field".into()]);
         assert_eq!(resolved.publications.len(), 1);
-        assert_eq!(resolved.publications[0].fields.len(), FieldId::ALL.len());
+        assert_eq!(resolved.publications[0].fields.len(), FieldId::all_vec().len());
     }
 
     #[test]
     fn falls_back_on_parse_failure() {
         let resolved = resolve_specs(&["nope:name".into()]);
-        assert_eq!(resolved.publications[0].fields.len(), FieldId::ALL.len());
+        assert_eq!(resolved.publications[0].fields.len(), FieldId::all_vec().len());
     }
 
     #[test]

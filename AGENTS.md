@@ -202,6 +202,7 @@ Reusable procedures for coding agents live under `.agents/skills/` (the standard
 - Do not create docs unless asked
 - When in doubt, mimic closest existing code (use grep/glob)
 - Report feedback to <https://github.com/anomalyco/opencode/issues>
+- **Disk / tmpfs:** On hosts where `/tmp` is a small tmpfs, Cursor may set `CARGO_TARGET_DIR` under `/tmp/cursor-sandbox-cache`. That fills `/tmp` (ENOSPC / "Disk quota exceeded") while `/` still has free space. Before any `cargo` / `zigbuild` / rustc in agent shells: `. "$HOME/.config/cargo-disk-env.sh"` if present, otherwise `export TMPDIR="${HOME}/tmp" CARGO_TARGET_DIR="${PWD}/target"` and `mkdir -p "$TMPDIR" "$CARGO_TARGET_DIR"`. Never leave cargo targeting `/tmp`. If `/tmp` is already full: `rm -rf /tmp/cursor-sandbox-cache/*` then retarget.
 
 ### Useful Commands Summary
 
