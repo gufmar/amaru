@@ -57,7 +57,6 @@ pub struct Args {
     /// TCP connect timeout.
     #[arg(
         long = "timeout-connect",
-        alias = "connect-timeout",
         value_name = amaru::value_names::DURATION,
         value_parser = duration::parse,
         env = amaru::env_vars::PROBE_TIMEOUT_CONNECT,
@@ -69,7 +68,6 @@ pub struct Args {
     /// Handshake mini-protocol timeout.
     #[arg(
         long = "timeout-handshake",
-        alias = "handshake-timeout",
         value_name = amaru::value_names::DURATION,
         value_parser = duration::parse,
         env = amaru::env_vars::PROBE_TIMEOUT_HANDSHAKE,
@@ -81,7 +79,6 @@ pub struct Args {
     /// Timeout for chainsync / peer-share / observability / keep-alive replies.
     #[arg(
         long = "timeout-protocol",
-        alias = "protocol-timeout",
         value_name = amaru::value_names::DURATION,
         value_parser = duration::parse,
         env = amaru::env_vars::PROBE_TIMEOUT_PROTOCOL,
@@ -108,19 +105,18 @@ pub struct Args {
     handshake: bool,
 
     /// Request up to 10 peer-share addresses.
-    #[arg(long = "peer-share", alias = "peershare", display_order = 0)]
+    #[arg(long = "peer-share", display_order = 0)]
     peer_share: bool,
 
     /// After peer-share, check each returned peer on one TCP session (connect + N2N handshake).
     ///
     /// Bare `--ps-check` stops after a successful Accept. Optional semicolon-separated extras
-    /// run on the same connection after handshake: `ping`, `tip`, `peer-share` (`peershare`),
-    /// `observe` (e.g. `--ps-check tip;observe`). Peer-share extras report returned addresses
+    /// run on the same connection after handshake: `ping`, `tip`, `peer-share`, `observe`
+    /// (e.g. `--ps-check tip;observe`). Peer-share extras report returned addresses
     /// but those addresses are not ps-checked again (one level only). Uses the same timeouts,
     /// `--requested-version`, `--time-track`, and `--retry` as the primary probe.
     #[arg(
         long = "ps-check",
-        alias = "pscheck",
         num_args = 0..=1,
         default_missing_value = "",
         value_name = "TESTS",
@@ -141,7 +137,7 @@ pub struct Args {
     all: bool,
 
     /// Record per-step wall timestamps, deltas, elapsed-from-start, and TCP bytes.
-    #[arg(long = "time-track", alias = "timetrack", display_order = 0)]
+    #[arg(long = "time-track", display_order = 0)]
     time_track: bool,
 
     /// Extra attempts after a failed handshake-query or session step.
@@ -167,7 +163,6 @@ pub struct Args {
     /// Applies to the primary probe and to each `--ps-check` session.
     #[arg(
         long = "requested-version",
-        alias = "requestedVersion",
         value_name = amaru::value_names::UINT,
         env = amaru::env_vars::PROBE_REQUESTED_VERSION,
         default_value_t = amaru_protocols::protocol_messages::version_number::VersionNumber::HIGHEST.as_u64(),
@@ -238,7 +233,7 @@ impl FromStr for PsCheckSpec {
             match token.to_ascii_lowercase().as_str() {
                 "ping" => extras.ping = true,
                 "tip" => extras.tip = true,
-                "peer-share" | "peershare" => extras.peer_share = true,
+                "peer-share" => extras.peer_share = true,
                 "observe" => extras.observe = true,
                 other => {
                     return Err(format!(
@@ -778,9 +773,9 @@ impl HumanOut {
         }
         if let Some(peers) = &report.peers {
             if peers.is_empty() {
-                self.section_warn_suffix("peershare", "skipped (not negotiated)");
+                self.section_warn_suffix("peer-share", "skipped (not negotiated)");
             } else {
-                self.section_ok_suffix("peershare", format!("{} peer(s)", peers.len()));
+                self.section_ok_suffix("peer-share", format!("{} peer(s)", peers.len()));
                 for p in peers {
                     if include_pscheck && let Some(check) = report.peer_checks.iter().find(|c| c.address == *p) {
                         self.pscheck_nested(check);
@@ -833,7 +828,7 @@ impl HumanOut {
     }
 
     fn timetrack(&self, steps: &[session::TimeTrackStep]) {
-        self.section_ok("timetrack");
+        self.section_ok("time-track");
         println!("    {:<22} {:>10} {:>10} {:>10} {:>10}  {}", "step", "delta_ms", "elapsed_ms", "sent", "recv", "at");
         for s in steps {
             println!(
@@ -866,7 +861,7 @@ impl HumanOut {
     }
 
     fn pscheck_header(&self) {
-        self.section_ok("pscheck");
+        self.section_ok("ps-check");
         self.flush();
     }
 
@@ -880,7 +875,7 @@ impl HumanOut {
 
     fn pscheck_orphan(&self, check: &session::PeerCheck) {
         let tag = self.p.status(check.ok);
-        println!("  {tag}pscheck{}  {}  {}", self.p.reset, check.address, format_pscheck_summary(check));
+        println!("  {tag}ps-check{}  {}  {}", self.p.reset, check.address, format_pscheck_summary(check));
         self.pscheck_details(check, "           ");
     }
 
@@ -896,7 +891,7 @@ impl HumanOut {
             self.field(indent, "tip hash", &tip.hash);
         }
         if let Some(peers) = &check.peers {
-            self.field(indent, "peershare", format!("{} peer(s) (not recursively checked)", peers.len()));
+            self.field(indent, "peer-share", format!("{} peer(s) (not recursively checked)", peers.len()));
             for p in peers {
                 println!("{indent}  {p}");
             }
@@ -906,7 +901,7 @@ impl HumanOut {
             self.publications(pubs, &format!("{indent}  "));
         }
         if !check.timetrack.is_empty() {
-            println!("{indent}timetrack:");
+            println!("{indent}time-track:");
             for s in &check.timetrack {
                 println!("{indent}  {:<22} {:>10} {:>10}", s.step, s.delta_ms, s.elapsed_ms);
             }
@@ -1046,12 +1041,6 @@ mod tests {
         assert!(spec.extras.peer_share);
         assert!(spec.extras.observe);
         assert_eq!(spec.display(), "ping;tip;peer-share;observe");
-    }
-
-    #[test]
-    fn ps_check_spec_accepts_peershare_alias() {
-        let spec: PsCheckSpec = "peershare".parse().unwrap();
-        assert!(spec.extras.peer_share);
     }
 
     #[test]
